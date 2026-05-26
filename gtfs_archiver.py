@@ -2,7 +2,7 @@
 # Author Information:
 # Drew Mulcare
 # github@mxdrew.com
-# May 25, 2026 (Last updated May 25, 2026)
+# May 25, 2026 (Last updated May 26, 2026)
 #
 # Description:
 # Lightweight, single-file data ingestion engine for real-time and static transit feeds. 
@@ -124,18 +124,22 @@ def writer_worker():
     log("Writer thread engaged. Streaming to JSONL.")
     handles = {}
     
+    # Capture the current date once for the 'first_logged' field
+    first_logged_date = datetime.now(LOCAL_TZ).strftime("%Y-%m-%d")
+    
     try:
         while not stop_event.is_set() or not write_queue.empty():
             try:
                 endpoint, evt_type, record_data = write_queue.get(timeout=1.0)
                 
-                # Deterministic deduplication hash
+                # 1. Deterministic hash (Excludes timestamp/log date to allow deduplication across days)
                 payload_str = f"{endpoint}|{evt_type}|{record_data.get('id', '')}|{json.dumps(record_data, sort_keys=True)}"
                 hash_id = hashlib.sha256(payload_str.encode("utf-8")).hexdigest()
                 
-                # Format to exact schema specification
+                # 2. Format to schema with historical tracking
                 record = {
                     "hash_id": hash_id,
+                    "first_logged": first_logged_date, # This date is stable for the life of the record
                     "ts": datetime.now(LOCAL_TZ).isoformat(),
                     "event": evt_type,
                     "id": str(record_data.get("id", "")),

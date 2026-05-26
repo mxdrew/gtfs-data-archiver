@@ -2,10 +2,10 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
-# Install the zstd utility (pyarrow handles compression internally, 
+# Install the zstd & nano utilities (pyarrow handles compression internally, 
 # but the OS tool is handy for manual container inspections)
 RUN apt-get update && \
-    apt-get install -y zstd && \
+    apt-get install -y zstd nano && \
     rm -rf /var/lib/apt/lists/*
 
 # Copy the requirements file and install dependencies

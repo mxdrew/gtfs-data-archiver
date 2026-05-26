@@ -4,7 +4,7 @@
 
 | Event | Date | Notes |
 | ----- | ---- | ----- |
-| Archiving Started | May 25, 2026 | |
+| Archiving Started | May 26, 2026 | There may be a few records from May 25, 2026 due to building and testing of the script. |
 
 ---
 
@@ -83,7 +83,6 @@ data/
 - All Parquet files use ZSTD compression  
 - Files are partitioned by `MMDDYYYY` snapshot date derived from `SYNC_TIMEZONE`  
 
-
 **Schema:**
 | Column | Parquet Type | Notes | Example |
 |:------:|:------------:|:------:|:--------:|
@@ -114,21 +113,25 @@ data/
 
 ---
 
-## 3. ``data/archive/gtfs/`` (Static Schedule Data)
+## 3. `data/archive/gtfs/` (Static Schedule Data)
 
 **Purpose:** Twice-daily static GTFS snapshots, converted from CSV to Parquet.
 
 **Behavior:**
-- Full dataset replacement per run (not incremental updates)  
-- Generated at fixed times: 03:00 and 15:00 (local `SYNC_TIMEZONE`)  
+- Full dataset replacement per run (not incremental updates).
+- Generated at fixed times: 03:00 and 15:00 (local `SYNC_TIMEZONE`).
+- Each record is assigned a stable `hash_id` (SHA-256 fingerprint) and a `first_logged` timestamp (`YYYY-MM-DD`). This prevents redundant storage of identical records across snapshots while maintaining a permanent record of when each unique entity first appeared in the archive.
 
-**Schema:** 
-- These files strictly adhere to the [MBTA GTFS Documentation](https://github.com/mbta/gtfs-documentation/blob/master/reference/gtfs.md). The exact fields in each `.txt` can be found in the documentation. 
+**Schema:** - These files strictly adhere to the [MBTA GTFS Documentation](https://github.com/mbta/gtfs-documentation/blob/master/reference/gtfs.md).
 - Each Parquet file corresponds to a standard GTFS table (e.g., `stops.txt` becomes `gtfs_stops_MMDDYYYY.parquet`).
+- **Metadata Fields:**
+    - `hash_id`: Deterministic fingerprint based on record content for automated deduplication.
+    - `first_logged`: Immutable date string stamped at the moment of first ingestion to support point-in-time analysis.
 
 **Freshness Guarantee:**
-- Updated twice daily (03:00 and 15:00 local time)  
-- Each run produces a complete replacement dataset for that timestamp  
+- Updated twice daily (03:00 and 15:00 local time).
+- Each run produces a complete replacement dataset for that timestamp, with legacy records automatically updated to include `first_logged` metadata.
+- This is not a money-back guarantee as there is no money involved - its more of a pinky promise at best.
 
 **Generated Files:**
 - `gtfs_agency_MMDDYYYY.parquet`
