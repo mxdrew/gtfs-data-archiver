@@ -1,0 +1,17 @@
+.vscode/
+.env
+.venv/
+
+data*/
+
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+
+*.db*
+*.tar*
+*.json
+
+docker-compose-*.yaml

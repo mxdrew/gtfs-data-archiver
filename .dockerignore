@@ -1,0 +1,14 @@
+.vscode/
+.venv/
+
+data*/
+
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+
+LICENSE
+README.md
+.gitignore
