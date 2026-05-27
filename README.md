@@ -9,6 +9,8 @@ Built with the MBTA in mind, but designed to be adaptable to any transit agency 
 
 Data is archived to JSONL (real-time write-ahead log) and Parquet (compressed analytics format) using queue-based asynchronous writers optimized for continuous ingestion.
 
+Configuration lives directly in the compose files. `docker-compose.yaml` contains MBTA values as a default.
+
 This project aims to adhere to the [MassDOT Developers License Agreement](https://cdn.mbta.com/sites/default/files/2023-08/mbta-massdot-develop-license-agreement.pdf). Any data collected is owned by the provider (MBTA & MassDOT) and is not claimed by this project.
 
 ---
@@ -26,13 +28,13 @@ This project aims to adhere to the [MassDOT Developers License Agreement](https:
     ▼
     writer_worker
     │
-    ├──► data/events/.jsonl (Write-Ahead Log)
+    ├──► AGENCY_NAME_<endpoint>_<MMDDYYYY>.jsonl (Write-Ahead Log)
     │
     ▼
     parquet_compaction_worker
     │
-    ├──► data/archive/.parquet
-    └──► data/archive/gtfs/*.parquet
+    ├──► AGENCY_NAME_<endpoint>_<MMDDYYYY>.parquet
+    └──► AGENCY_NAME_gtfs_<table>_<MMDDYYYY>.parquet
 ```
 
 ### Core Components
@@ -59,6 +61,8 @@ This project aims to adhere to the [MassDOT Developers License Agreement](https:
 ## Data Schema
 
 All schema definitions are intentionally centralized in [**DATA.md**](https://github.com/mxdrew/gtfs-data-archiver/blob/main/DATA.md) to avoid duplication and drift.
+
+All generated files use the same `AGENCY_NAME_<source>_<MMDDYYYY>` prefix so archives from different agencies stay isolated and easy to scan.
 
 See:
 - `data/events/` → [DATA.md](https://github.com/mxdrew/gtfs-data-archiver/blob/main/DATA.md#1-dataevents-active-write-ahead-logs) (Active ingestion schema)
@@ -112,72 +116,95 @@ See:
 - Hourly snapshot ingestion
 - GTFS refresh at 03:00 and 15:00 (local timezone)
 
+### Runtime Logs
+
+- Container stdout and stderr are the live operational log for this project.
+- It includes startup messages, stream connect/reconnect notices, warnings, and errors.
+- View it with `docker logs -f <container_name>` or Docker Desktop's Logs tab.
+- Keep `LOG_LEVEL` at `warning` or `errors` for normal runs. At `info`, output can grow very quickly during high-throughput stream activity and thus will be hard to keep track of.
+
 ---
 
 ## Configuration
 
-All configuration is managed via `.env`, a sample of which is below: 
+Configuration is defined directly in the compose file. `docker-compose.yaml` is the sample setup. It uses MBTA defaults for the API endpoints, feed URLs, stream lists, and tuning values, with `API_KEY` left blank.
 
-```env
-    #### CORE CONFIGURATION ####
+The application reads only the values in the table below. Missing values are handled safely, and stream-only, snapshot-only, or GTFS-only runs are all supported by the toggles.
 
-    API_KEY=your_api_key
-    SYNC_TIMEZONE=America/New_York
-    BASE_URL=https://api.example.com
-    GTFS_URL=https://example.com/gtfs.zip
+| Variable | Purpose | Default in `docker-compose.yaml` |
+|----------|---------|----------------------------------|
+| `API_KEY` | API authentication key | YOUR_API_KEY |
+| `SYNC_TIMEZONE` | [IANA timezone](https://en.wikipedia.org/wiki/List_of_tz_database_time_zones#List) used for scheduling and filenames | `America/New_York` |
+| `AGENCY_NAME` | Filename prefix for generated outputs | `MBTA` |
+| `BASE_URL` | Transit Agency's API base URL | `https://api-v3.mbta.com` |
+| `GTFS_URL` | Static GTFS ZIP source static schedule imports | `https://cdn.mbta.com/MBTA_GTFS.zip` |
+| `ENABLE_BASE_STREAMS` | Enables live base SSE consumers | `true` |
+| `ENABLE_ROUTE_STREAMS` | Enables route-batched SSE consumers | `true` |
+| `ENABLE_SNAPSHOT_PULLS` | Enables scheduled snapshot pulls | `true` |
+| `ENABLE_ENHANCED_STREAMS` | Enables enhanced bulk pollers | `true` |
+| `ENABLE_GTFS_STATIC` | Enables twice-daily static GTFS downloads | `true` |
+| `BASE_STREAMS` | Base SSE endpoints | `vehicles,alerts` |
+| `ROUTE_STREAMS` | Route-batched SSE endpoints | `predictions,stop_events` |
+| `SNAPSHOT_EPS` | Snapshot endpoints | `schedules,services,shapes,trips,lines,routes,route_patterns,facilities,stops,live_facilities` |
+| `ENHANCED_POLL_INTERVAL_SECONDS` | Delay between enhanced feed polls | `7` |
+| `VEHICLES_ENHANCED_URL` | Enhanced vehicle feed URL - Potentially MBTA Specific | `https://cdn.mbta.com/realtime/VehiclePositions_enhanced.json` |
+| `ALERTS_ENHANCED_URL` | Enhanced alerts feed URL - Potentially MBTA Specific | `https://cdn.mbta.com/realtime/Alerts_enhanced.json` |
+| `TRIPS_ENHANCED_URL` | Enhanced trip updates feed URL - Potentially MBTA Specific| `https://cdn.mbta.com/realtime/TripUpdates_enhanced.json` |
+| `DEFAULT_BATCH_SIZE` | Batch size for route grouping | `25` |
+| `LOG_LEVEL` | Logging verbosity | `warning` |
+| `ARCHIVE_ZSTD_LEVEL` | Parquet compression level used for archive files | `10` |
 
+### Required For Any Run
 
-    #### STREAM CONFIGURATION ####
+| Variable | Description |
+|----------|-------------|
+| `SYNC_TIMEZONE` | [IANA timezone](https://en.wikipedia.org/wiki/List_of_tz_database_time_zones#List) string used for scheduling and timestamp alignment |
+| `ARCHIVE_ZSTD_LEVEL` | Compression level for Parquet archives |
+| `LOG_LEVEL` | Logging verbosity (e.g., `info`, `warnings`, `errors`) |
 
-    # Base SSE streams (real-time unbatched feeds)
-    BASE_STREAMS=vehicles,alerts
+### Recommended For Any Run
 
-    # Route-batched SSE streams (filtered by route IDs)
-    ROUTE_STREAMS=predictions,stop_events
+| Variable | Description |
+|----------|-------------|
+| `AGENCY_NAME` | Prefix used in generated file names; defaults to `agency` if omitted |
 
-    # Snapshot endpoints (hourly full-state pulls)
-    SNAPSHOT_EPS=schedules,services,shapes,trips,lines,routes,route_patterns,facilities,stops,live_facilities
+### Required For Static GTFS Mode
 
-    # Enable/disable stream categories
-    ENABLE_ROUTE_STREAMS=true
-    ENABLE_ENHANCED_STREAMS=true
+| Variable | Description |
+|----------|-------------|
+| `GTFS_URL` | Static GTFS ZIP source |
 
-
-    #### ENHANCED BULK FEEDS ####
-
-    VEHICLES_ENHANCED_URL=https://cdn.mbta.com/realtime/VehiclePositions_enhanced.json
-    ALERTS_ENHANCED_URL=https://cdn.mbta.com/realtime/Alerts_enhanced.json
-    TRIPS_ENHANCED_URL=https://cdn.mbta.com/realtime/TripUpdates_enhanced.json
-
-
-    #### PERFORMANCE TUNING ####
-
-    DEFAULT_BATCH_SIZE=25
-    ENHANCED_POLL_INTERVAL_SECONDS=7
-    ARCHIVE_ZSTD_LEVEL=10
-
-
-    #### LOGGING ####
-
-    # info | warnings | errors
-    LOG_LEVEL=errors
-```
-
-### Required Variables
+### Required Only For API-Backed Modes
 
 | Variable | Description |
 |----------|-------------|
 | `API_KEY` | API authentication key |
-| `SYNC_TIMEZONE` | [IANA timezone](https://en.wikipedia.org/wiki/List_of_tz_database_time_zones#List) string used for scheduling and timestamp alignment |
 | `BASE_URL` | Transit API base URL |
-| `GTFS_URL` | Static GTFS ZIP source |
+
+### Mode-Specific Variables
+
+| Variable | Description |
+|----------|-------------|
 | `BASE_STREAMS` | SSE endpoints |
 | `ROUTE_STREAMS` | Route-batched SSE endpoints |
 | `SNAPSHOT_EPS` | Snapshot endpoints |
+| `ENABLE_BASE_STREAMS` | Enables live base SSE consumers |
+| `ENABLE_ROUTE_STREAMS` | Enables route-batched SSE consumers |
+| `ENABLE_SNAPSHOT_PULLS` | Enables scheduled snapshot pulls |
+| `ENABLE_ENHANCED_STREAMS` | Enables enhanced bulk pollers |
+| `ENABLE_GTFS_STATIC` | Enables twice-daily static GTFS downloads |
 | `DEFAULT_BATCH_SIZE` | Batch size for route grouping |
 | `ENHANCED_POLL_INTERVAL_SECONDS` | Poll interval for enhanced bulk feeds |
-| `ARCHIVE_ZSTD_LEVEL` | Compression level for Parquet archives |
-| `LOG_LEVEL` | Logging verbosity (e.g., `info`, `warnings`, `errors`) |
+
+Static-only runs can disable every API-backed mode and leave only GTFS enabled:
+
+```yaml
+ENABLE_BASE_STREAMS=false
+ENABLE_ROUTE_STREAMS=false
+ENABLE_SNAPSHOT_PULLS=false
+ENABLE_ENHANCED_STREAMS=false
+ENABLE_GTFS_STATIC=true
+```
 
 ---
 
@@ -186,14 +213,18 @@ All configuration is managed via `.env`, a sample of which is below:
 ### Docker (recommended)
 
 ```bash
+git clone https://github.com/mxdrew/gtfs-data-archiver.git
+cd gtfs-data-archiver
 docker compose up -d --build
 ```
 
 ### Manual
 
 ```bash
+git clone https://github.com/mxdrew/gtfs-data-archiver.git
+cd gtfs-data-archiver
 pip install -r requirements.txt
-python gtfs_logger.py
+python gtfs_archiver.py
 ```
 
 ---
@@ -234,6 +265,7 @@ More info, such as schema definitions, file formats, period of time captured, an
 - Build an MBTA system map or line map that shows train positions on a given line in real time.
 - Explore MBTA's historical performance data.
 - Explore other agencies through the [Mobility Database](https://mobilitydatabase.org/) or [Transitland](https://www.transit.land/).
+- Allow for logging multiple agencies at once.
 
 ---
 

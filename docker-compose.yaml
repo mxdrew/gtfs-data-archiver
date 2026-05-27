@@ -3,36 +3,33 @@ services:
     build: .
     container_name: gtfs-data-archiver
     restart: unless-stopped
-    env_file:
-      - .env
     environment:
-      - API_KEY=${API_KEY}
-      - HOST=${HOST}
-      - CONTAINER_NAME=${CONTAINER_NAME}
-      - REMOTE_HOST_JSONL_DIR=${REMOTE_HOST_JSONL_DIR}
-      - LOCAL_BASE_WINDOWS=${LOCAL_BASE_WINDOWS}
-      - LOCAL_BASE_WSL=${LOCAL_BASE_WSL}
-      - SYNC_TIMEZONE=${SYNC_TIMEZONE}
-      - AGENCY_NAME=${AGENCY_NAME}
-      - BASE_URL=${BASE_URL}
-      - GTFS_URL=${GTFS_URL}
-      - ENABLE_ROUTE_STREAMS=${ENABLE_ROUTE_STREAMS}
-      - ENABLE_FACILITY_STREAMS=${ENABLE_FACILITY_STREAMS}
-      - ENABLE_ENHANCED_STREAMS=${ENABLE_ENHANCED_STREAMS}
-      - BASE_STREAMS=${BASE_STREAMS}
-      - ROUTE_STREAMS=${ROUTE_STREAMS}
-      - SNAPSHOT_EPS=${SNAPSHOT_EPS}
-      - ENHANCED_POLL_INTERVAL_SECONDS=${ENHANCED_POLL_INTERVAL_SECONDS}
-      - VEHICLES_ENHANCED_URL=${VEHICLES_ENHANCED_URL}
-      - ALERTS_ENHANCED_URL=${ALERTS_ENHANCED_URL}
-      - TRIPS_ENHANCED_URL=${TRIPS_ENHANCED_URL}
-      - DEFAULT_BATCH_SIZE=${DEFAULT_BATCH_SIZE}
-      - LOG_LEVEL=${LOG_LEVEL}
-      - ARCHIVE_ZSTD_LEVEL=${ARCHIVE_ZSTD_LEVEL}
-      - ROUTE_LOOKUP_LIMIT=${ROUTE_LOOKUP_LIMIT}
-      - STOP_LOOKUP_LIMIT=${STOP_LOOKUP_LIMIT}
-      - FACILITY_LOOKUP_LIMIT=${FACILITY_LOOKUP_LIMIT}
-      - SYNC_MODE=${SYNC_MODE}
-      - CUSTOM_SYNC_TIMES=${CUSTOM_SYNC_TIMES}
+      # Core settings and stream controls
+      - API_KEY=YOUR_API_KEY_HERE
+      - SYNC_TIMEZONE=America/New_York
+      - AGENCY_NAME=MBTA
+      - BASE_URL=https://api-v3.mbta.com
+      - GTFS_URL=https://cdn.mbta.com/MBTA_GTFS.zip
+      - ENABLE_BASE_STREAMS=true
+      - ENABLE_ROUTE_STREAMS=true
+      - ENABLE_SNAPSHOT_PULLS=true
+      - ENABLE_ENHANCED_STREAMS=true
+      - ENABLE_GTFS_STATIC=true
+
+      # Stream and snapshot targets
+      - BASE_STREAMS=vehicles,alerts
+      - ROUTE_STREAMS=predictions,stop_events
+      - SNAPSHOT_EPS=schedules,services,shapes,trips,lines,routes,route_patterns,facilities,stops,live_facilities
+
+      # Enhanced bulk feed settings
+      - ENHANCED_POLL_INTERVAL_SECONDS=7
+      - VEHICLES_ENHANCED_URL=https://cdn.mbta.com/realtime/VehiclePositions_enhanced.json
+      - ALERTS_ENHANCED_URL=https://cdn.mbta.com/realtime/Alerts_enhanced.json
+      - TRIPS_ENHANCED_URL=https://cdn.mbta.com/realtime/TripUpdates_enhanced.json
+
+      # Tuning and logging
+      - DEFAULT_BATCH_SIZE=25
+      - LOG_LEVEL=warning
+      - ARCHIVE_ZSTD_LEVEL=10
     volumes:
       - ./data:/app/data

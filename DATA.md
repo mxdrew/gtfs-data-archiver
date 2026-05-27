@@ -49,23 +49,23 @@ data/
 - GTFS static: Scheduled dataset exports (non-event-based)  
 
 **Generated Files:**
-- `alerts_MMDDYYYY.parquet`
-- `alerts_enhanced_MMDDYYYY.parquet`
-- `facilities_MMDDYYYY.parquet`
-- `lines_MMDDYYYY.parquet`
-- `live_facilities_MMDDYYYY.parquet`
-- `predictions_MMDDYYYY.parquet`
-- `route_patterns_MMDDYYYY.parquet`
-- `routes_MMDDYYYY.parquet`
-- `schedules_MMDDYYYY.parquet`
-- `services_MMDDYYYY.parquet`
-- `shapes_MMDDYYYY.parquet`
-- `stop_events_MMDDYYYY.parquet`
-- `stops_MMDDYYYY.parquet`
-- `trips_MMDDYYYY.parquet`
-- `trips_enhanced_MMDDYYYY.parquet`
-- `vehicles_MMDDYYYY.parquet`
-- `vehicles_enhanced_MMDDYYYY.parquet`
+- `AGENCY_NAME_alerts_MMDDYYYY.parquet`
+- `AGENCY_NAME_alerts_enhanced_MMDDYYYY.parquet`
+- `AGENCY_NAME_facilities_MMDDYYYY.parquet`
+- `AGENCY_NAME_lines_MMDDYYYY.parquet`
+- `AGENCY_NAME_live_facilities_MMDDYYYY.parquet`
+- `AGENCY_NAME_predictions_MMDDYYYY.parquet`
+- `AGENCY_NAME_route_patterns_MMDDYYYY.parquet`
+- `AGENCY_NAME_routes_MMDDYYYY.parquet`
+- `AGENCY_NAME_schedules_MMDDYYYY.parquet`
+- `AGENCY_NAME_services_MMDDYYYY.parquet`
+- `AGENCY_NAME_shapes_MMDDYYYY.parquet`
+- `AGENCY_NAME_stop_events_MMDDYYYY.parquet`
+- `AGENCY_NAME_stops_MMDDYYYY.parquet`
+- `AGENCY_NAME_trips_MMDDYYYY.parquet`
+- `AGENCY_NAME_trips_enhanced_MMDDYYYY.parquet`
+- `AGENCY_NAME_vehicles_MMDDYYYY.parquet`
+- `AGENCY_NAME_vehicles_enhanced_MMDDYYYY.parquet`
 
 ---
 
@@ -93,23 +93,23 @@ data/
 | `data` | `STRING` | Stringified JSON payload. | `{"attributes": {...}}` |
 
 **Generated Files:**
-- `alerts_MMDDYYYY.parquet`
-- `alerts_enhanced_MMDDYYYY.parquet`
-- `facilities_MMDDYYYY.parquet`
-- `lines_MMDDYYYY.parquet`
-- `live_facilities_MMDDYYYY.parquet`
-- `predictions_MMDDYYYY.parquet`
-- `route_patterns_MMDDYYYY.parquet`
-- `routes_MMDDYYYY.parquet`
-- `schedules_MMDDYYYY.parquet`
-- `services_MMDDYYYY.parquet`
-- `shapes_MMDDYYYY.parquet`
-- `stop_events_MMDDYYYY.parquet`
-- `stops_MMDDYYYY.parquet`
-- `trips_MMDDYYYY.parquet`
-- `trips_enhanced_MMDDYYYY.parquet`
-- `vehicles_MMDDYYYY.parquet`
-- `vehicles_enhanced_MMDDYYYY.parquet`
+- `AGENCY_NAME_alerts_MMDDYYYY.parquet`
+- `AGENCY_NAME_alerts_enhanced_MMDDYYYY.parquet`
+- `AGENCY_NAME_facilities_MMDDYYYY.parquet`
+- `AGENCY_NAME_lines_MMDDYYYY.parquet`
+- `AGENCY_NAME_live_facilities_MMDDYYYY.parquet`
+- `AGENCY_NAME_predictions_MMDDYYYY.parquet`
+- `AGENCY_NAME_route_patterns_MMDDYYYY.parquet`
+- `AGENCY_NAME_routes_MMDDYYYY.parquet`
+- `AGENCY_NAME_schedules_MMDDYYYY.parquet`
+- `AGENCY_NAME_services_MMDDYYYY.parquet`
+- `AGENCY_NAME_shapes_MMDDYYYY.parquet`
+- `AGENCY_NAME_stop_events_MMDDYYYY.parquet`
+- `AGENCY_NAME_stops_MMDDYYYY.parquet`
+- `AGENCY_NAME_trips_MMDDYYYY.parquet`
+- `AGENCY_NAME_trips_enhanced_MMDDYYYY.parquet`
+- `AGENCY_NAME_vehicles_MMDDYYYY.parquet`
+- `AGENCY_NAME_vehicles_enhanced_MMDDYYYY.parquet`
 
 ---
 
@@ -134,41 +134,42 @@ data/
 - This is not a money-back guarantee as there is no money involved - its more of a pinky promise at best.
 
 **Generated Files:**
-- `gtfs_agency_MMDDYYYY.parquet`
-- `gtfs_areas_MMDDYYYY.parquet`
-- `gtfs_calendar_MMDDYYYY.parquet`
-- `gtfs_calendar_attributes_MMDDYYYY.parquet`
-- `gtfs_calendar_dates_MMDDYYYY.parquet`
-- `gtfs_checkpoints_MMDDYYYY.parquet`
-- `gtfs_directions_MMDDYYYY.parquet`
-- `gtfs_facilities_MMDDYYYY.parquet`
-- `gtfs_facilities_properties_MMDDYYYY.parquet`
-- `gtfs_facilities_properties_definitions_MMDDYYYY.parquet`
-- `gtfs_fare_leg_join_rules_MMDDYYYY.parquet`
-- `gtfs_fare_leg_rules_MMDDYYYY.parquet`
-- `gtfs_fare_media_MMDDYYYY.parquet`
-- `gtfs_fare_products_MMDDYYYY.parquet`
-- `gtfs_fare_transfer_rules_MMDDYYYY.parquet`
-- `gtfs_feed_info_MMDDYYYY.parquet`
-- `gtfs_levels_MMDDYYYY.parquet`
-- `gtfs_lines_MMDDYYYY.parquet`
-- `gtfs_linked_datasets_MMDDYYYY.parquet`
-- `gtfs_multi_route_trips_MMDDYYYY.parquet`
-- `gtfs_pathways_MMDDYYYY.parquet`
-- `gtfs_route_patterns_MMDDYYYY.parquet`
-- `gtfs_routes_MMDDYYYY.parquet`
-- `gtfs_shapes_MMDDYYYY.parquet`
-- `gtfs_stop_areas_MMDDYYYY.parquet`
-- `gtfs_stop_times_MMDDYYYY.parquet`
-- `gtfs_stops_MMDDYYYY.parquet`
-- `gtfs_timeframes_MMDDYYYY.parquet`
-- `gtfs_transfers_MMDDYYYY.parquet`
-- `gtfs_trips_MMDDYYYY.parquet`
-- `gtfs_trips_properties_MMDDYYYY.parquet`
-- `gtfs_trips_properties_definitions_MMDDYYYY.parquet`
-
----
+- `AGENCY_NAME_gtfs_agency_MMDDYYYY.parquet`
+- `AGENCY_NAME_gtfs_areas_MMDDYYYY.parquet`
+- `AGENCY_NAME_gtfs_calendar_MMDDYYYY.parquet`
+- `AGENCY_NAME_gtfs_calendar_attributes_MMDDYYYY.parquet`
+- `AGENCY_NAME_gtfs_calendar_dates_MMDDYYYY.parquet`
+- `AGENCY_NAME_gtfs_checkpoints_MMDDYYYY.parquet`
+- `AGENCY_NAME_gtfs_directions_MMDDYYYY.parquet`
+- `AGENCY_NAME_gtfs_facilities_MMDDYYYY.parquet`
+- `AGENCY_NAME_gtfs_facilities_properties_MMDDYYYY.parquet`
+- `AGENCY_NAME_gtfs_facilities_properties_definitions_MMDDYYYY.parquet`
+- `AGENCY_NAME_gtfs_fare_leg_join_rules_MMDDYYYY.parquet`
+- `AGENCY_NAME_gtfs_fare_leg_rules_MMDDYYYY.parquet`
+- `AGENCY_NAME_gtfs_fare_media_MMDDYYYY.parquet`
+- `AGENCY_NAME_gtfs_fare_products_MMDDYYYY.parquet`
+- `AGENCY_NAME_gtfs_fare_transfer_rules_MMDDYYYY.parquet`
+- `AGENCY_NAME_gtfs_feed_info_MMDDYYYY.parquet`
+- `AGENCY_NAME_gtfs_levels_MMDDYYYY.parquet`
+- `AGENCY_NAME_gtfs_lines_MMDDYYYY.parquet`
+- `AGENCY_NAME_gtfs_linked_datasets_MMDDYYYY.parquet`
+- `AGENCY_NAME_gtfs_multi_route_trips_MMDDYYYY.parquet`
+- `AGENCY_NAME_gtfs_pathways_MMDDYYYY.parquet`
+- `AGENCY_NAME_gtfs_route_patterns_MMDDYYYY.parquet`
+- `AGENCY_NAME_gtfs_routes_MMDDYYYY.parquet`
+- `AGENCY_NAME_gtfs_shapes_MMDDYYYY.parquet`
+- `AGENCY_NAME_gtfs_stop_areas_MMDDYYYY.parquet`
+- `AGENCY_NAME_gtfs_stop_times_MMDDYYYY.parquet`
+- `AGENCY_NAME_gtfs_stops_MMDDYYYY.parquet`
+- `AGENCY_NAME_gtfs_timeframes_MMDDYYYY.parquet`
+- `AGENCY_NAME_gtfs_transfers_MMDDYYYY.parquet`
+- `AGENCY_NAME_gtfs_trips_MMDDYYYY.parquet`
+- `AGENCY_NAME_gtfs_trips_properties_MMDDYYYY.parquet`
+- `AGENCY_NAME_gtfs_trips_properties_definitions_MMDDYYYY.parquet`
 
 ## Note
 
-The `MMDDYYYY` suffix represents the data pull date, determined using the `SYNC_TIMEZONE` environment variable defined in `.env`, ensuring all snapshots align with the configured synchronization timezone.
+File naming and similar functions are driven by the compose configuration:
+- The `MMDDYYYY` suffix comes from `SYNC_TIMEZONE` in the compose configuration.
+- `AGENCY_NAME` sets the filename prefix.
+- The enable flags control which file families are produced.

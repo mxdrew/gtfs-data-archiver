@@ -37,6 +37,7 @@
 import os
 import io
 import json
+import re
 import time
 import queue
 import zipfile
@@ -57,10 +58,54 @@ load_dotenv()
 
 #### CONFIGURATION ####
 
-LOCAL_TZ = ZoneInfo(os.environ.get("SYNC_TIMEZONE").strip())
-API_KEY = os.environ.get("API_KEY").strip()
-BASE_URL = os.environ.get("BASE_URL").strip()
-GTFS_URL = os.environ.get("GTFS_URL").strip()
+def env_text(name, default=""):
+    val = os.environ.get(name)
+    if val is None:
+        val = default
+    return str(val).strip()
+
+
+def env_int(name, default):
+    raw_value = env_text(name, str(default))
+    try:
+        return int(raw_value)
+    except ValueError:
+        return default
+
+
+def env_float(name, default):
+    raw_value = env_text(name, str(default))
+    try:
+        return float(raw_value)
+    except ValueError:
+        return default
+
+
+LOCAL_TZ = ZoneInfo(env_text("SYNC_TIMEZONE", "America/New_York") or "America/New_York")
+API_KEY = env_text("API_KEY")
+BASE_URL = env_text("BASE_URL")
+GTFS_URL = env_text("GTFS_URL")
+AGENCY_NAME = env_text("AGENCY_NAME", "agency") or "agency"
+
+
+def env_flag(name, default="false"):
+    val = os.environ.get(name)
+    if val is None:
+        val = default
+    return str(val).strip().lower() == "true"
+
+
+def env_list(name, default=""):
+    raw_value = env_text(name, default)
+    return [value.strip() for value in raw_value.split(",") if value.strip()]
+
+
+def safe_prefix(value):
+    cleaned_value = re.sub(r"[^A-Za-z0-9_-]+", "_", value.strip())
+    return cleaned_value.strip("_") or "agency"
+
+
+AGENCY_PREFIX = safe_prefix(AGENCY_NAME)
 
 DATA_DIR = Path("data")
 EVENTS_DIR = DATA_DIR / "events"
@@ -70,38 +115,44 @@ GTFS_DIR = ARCHIVE_DIR / "gtfs"
 for d in [EVENTS_DIR, ARCHIVE_DIR, GTFS_DIR]:
     d.mkdir(parents=True, exist_ok=True)
 
+ENABLE_BASE_STREAMS = env_flag("ENABLE_BASE_STREAMS", "true")
+ENABLE_ROUTE_STREAMS = env_flag("ENABLE_ROUTE_STREAMS", "true")
+ENABLE_SNAPSHOT_PULLS = env_flag("ENABLE_SNAPSHOT_PULLS", "true")
+ENABLE_ENHANCED_STREAMS = env_flag("ENABLE_ENHANCED_STREAMS", "true")
+ENABLE_GTFS_STATIC = env_flag("ENABLE_GTFS_STATIC", "true")
+
 # 1. Base Streams
-_base_streams_env = os.environ.get("BASE_STREAMS")
-BASE_STREAMS = [x.strip() for x in _base_streams_env.split(",") if x.strip()]
+BASE_STREAMS = env_list("BASE_STREAMS")
 
 # 2. Batched Streams
-_route_streams_env = os.environ.get("ROUTE_STREAMS")
-ROUTE_STREAMS = [x.strip() for x in _route_streams_env.split(",") if x.strip()]
-ENABLE_ROUTE_STREAMS = os.environ.get("ENABLE_ROUTE_STREAMS", "true").strip().lower() == "true"
+ROUTE_STREAMS = env_list("ROUTE_STREAMS")
 
 # 3. Snapshot Endpoints
-_snapshot_eps_env = os.environ.get("SNAPSHOT_EPS")
-SNAPSHOT_EPS = [x.strip() for x in _snapshot_eps_env.split(",") if x.strip()]
+SNAPSHOT_EPS = env_list("SNAPSHOT_EPS")
 
 # 4. Enhanced Bulk Feeds
-ENABLE_ENHANCED_STREAMS = os.environ.get("ENABLE_ENHANCED_STREAMS", "true").strip().lower() == "true"
 ENHANCED_BULK_STREAMS = {}
 if ENABLE_ENHANCED_STREAMS:
-    if os.environ.get("VEHICLES_ENHANCED_URL"):
-        ENHANCED_BULK_STREAMS["vehicles_enhanced"] = os.environ["VEHICLES_ENHANCED_URL"].strip()
-    if os.environ.get("ALERTS_ENHANCED_URL"):
-        ENHANCED_BULK_STREAMS["alerts_enhanced"] = os.environ["ALERTS_ENHANCED_URL"].strip()
-    if os.environ.get("TRIPS_ENHANCED_URL"):
-        ENHANCED_BULK_STREAMS["trips_enhanced"] = os.environ["TRIPS_ENHANCED_URL"].strip()
+    if env_text("VEHICLES_ENHANCED_URL"):
+        ENHANCED_BULK_STREAMS["vehicles_enhanced"] = env_text("VEHICLES_ENHANCED_URL")
+    if env_text("ALERTS_ENHANCED_URL"):
+        ENHANCED_BULK_STREAMS["alerts_enhanced"] = env_text("ALERTS_ENHANCED_URL")
+    if env_text("TRIPS_ENHANCED_URL"):
+        ENHANCED_BULK_STREAMS["trips_enhanced"] = env_text("TRIPS_ENHANCED_URL")
 
 # Tuning Parameters
-DEFAULT_BATCH_SIZE = int(os.environ.get("DEFAULT_BATCH_SIZE"))
-ENHANCED_POLL_INTERVAL_SECONDS = float(os.environ.get("ENHANCED_POLL_INTERVAL_SECONDS"))
-ARCHIVE_ZSTD_LEVEL = int(os.environ.get("ARCHIVE_ZSTD_LEVEL"))
-LOG_LEVEL = os.environ.get("LOG_LEVEL", "info").strip().lower()
+DEFAULT_BATCH_SIZE = env_int("DEFAULT_BATCH_SIZE", 25)
+ENHANCED_POLL_INTERVAL_SECONDS = env_float("ENHANCED_POLL_INTERVAL_SECONDS", 7)
+ARCHIVE_ZSTD_LEVEL = env_int("ARCHIVE_ZSTD_LEVEL", 10)
+LOG_LEVEL = env_text("LOG_LEVEL", "info").lower() or "info"
 
 write_queue = queue.Queue(maxsize=500000)
 stop_event = threading.Event()
+
+
+def dated_output_filename(stem, extension):
+    date_str = datetime.now(LOCAL_TZ).strftime("%m%d%Y")
+    return f"{AGENCY_PREFIX}_{stem}_{date_str}.{extension}"
 
 #### LOGGING ####
 
@@ -146,8 +197,7 @@ def writer_worker():
                     "data": record_data
                 }
                 
-                date_str = datetime.now(LOCAL_TZ).strftime("%m%d%Y")
-                filename = f"{endpoint}_{date_str}.jsonl"
+                filename = dated_output_filename(endpoint, "jsonl")
                 filepath = EVENTS_DIR / filename
                 
                 if filename not in handles:
@@ -287,15 +337,16 @@ def enhanced_poller(endpoint, url):
 
 def fetch_snapshots():
     """Runs hourly. Pulls contextual snapshots for all endpoints."""
-    if not BASE_URL: return
+    if not BASE_URL or not ENABLE_SNAPSHOT_PULLS:
+        return
     log("Pulling hourly snapshots...")
     headers = {"Accept": "application/json"}
     if API_KEY: headers["X-API-Key"] = API_KEY
-    
-    routes = fetch_api_ids("routes")
-    
-    # 1. Base Streams (No batching)
-    for endpoint in BASE_STREAMS:
+
+    # Snapshot endpoints are pulled once each so the stream toggles remain independent.
+    for endpoint in SNAPSHOT_EPS:
+        if stop_event.is_set():
+            break
         try:
             res = requests.get(f"{BASE_URL}/{endpoint}", headers=headers, timeout=30)
             if res.status_code == 200:
@@ -303,22 +354,10 @@ def fetch_snapshots():
                     write_queue.put((endpoint, "snapshot", r))
         except Exception: pass
 
-    # 2. Batched Snapshot Endpoints
-    for endpoint in SNAPSHOT_EPS:
-        if stop_event.is_set(): break
-        for i in range(0, len(routes), DEFAULT_BATCH_SIZE):
-            batch = routes[i:i + DEFAULT_BATCH_SIZE]
-            try:
-                res = requests.get(f"{BASE_URL}/{endpoint}", headers=headers, params={"filter[route]": ",".join(batch)}, timeout=30)
-                if res.status_code == 200:
-                    for r in res.json().get("data", []):
-                        write_queue.put((endpoint, "snapshot", r))
-            except Exception: pass
-            time.sleep(0.1)
-
 def fetch_gtfs_static():
     """Runs twice a day. Downloads GTFS zip, converts to Parquet."""
-    if not GTFS_URL: return
+    if not GTFS_URL or not ENABLE_GTFS_STATIC:
+        return
     log("Pulling static GTFS assets...")
     try:
         res = requests.get(GTFS_URL, timeout=120)
@@ -333,7 +372,7 @@ def fetch_gtfs_static():
                 
                 df = pd.read_csv(z.open(file_name), dtype=str, low_memory=False)
                 
-                out_path = GTFS_DIR / f"gtfs_{table_name}_{date_str}.parquet"
+                out_path = GTFS_DIR / f"{AGENCY_PREFIX}_gtfs_{table_name}_{date_str}.parquet"
                 table = pa.Table.from_pandas(df)
                 pq.write_table(table, out_path, compression="zstd", compression_level=ARCHIVE_ZSTD_LEVEL)
                 
@@ -349,11 +388,11 @@ def scheduler_thread():
     while not stop_event.is_set():
         now = datetime.now(LOCAL_TZ)
         
-        if now.hour != last_snapshot_hour and now.minute == 0:
+        if ENABLE_SNAPSHOT_PULLS and now.hour != last_snapshot_hour and now.minute == 0:
             threading.Thread(target=fetch_snapshots, daemon=True).start()
             last_snapshot_hour = now.hour
             
-        if now.hour in [3, 15] and now.hour != last_gtfs_pull:
+        if ENABLE_GTFS_STATIC and now.hour in [3, 15] and now.hour != last_gtfs_pull:
             threading.Thread(target=fetch_gtfs_static, daemon=True).start()
             last_gtfs_pull = now.hour
             
@@ -367,14 +406,17 @@ if __name__ == "__main__":
         
         threading.Thread(target=writer_worker, daemon=True).start()
         threading.Thread(target=parquet_compaction_worker, daemon=True).start()
-        threading.Thread(target=scheduler_thread, daemon=True).start()
+        if ENABLE_SNAPSHOT_PULLS or ENABLE_GTFS_STATIC:
+            threading.Thread(target=scheduler_thread, daemon=True).start()
         
         # Initial baseline pulls
-        if BASE_URL: threading.Thread(target=fetch_snapshots, daemon=True).start()
-        if GTFS_URL: threading.Thread(target=fetch_gtfs_static, daemon=True).start()
+        if BASE_URL and ENABLE_SNAPSHOT_PULLS:
+            threading.Thread(target=fetch_snapshots, daemon=True).start()
+        if GTFS_URL and ENABLE_GTFS_STATIC:
+            threading.Thread(target=fetch_gtfs_static, daemon=True).start()
         
         # Deploy Base Streams
-        if BASE_URL:
+        if BASE_URL and ENABLE_BASE_STREAMS:
             for endpoint in BASE_STREAMS:
                 threading.Thread(target=sse_consumer, args=(endpoint,), daemon=True).start()
                 
