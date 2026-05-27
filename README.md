@@ -9,9 +9,42 @@ Built with the MBTA in mind, but designed to be adaptable to any transit agency 
 
 Data is archived to JSONL (real-time write-ahead log) and Parquet (compressed analytics format) using queue-based asynchronous writers optimized for continuous ingestion.
 
-Configuration lives directly in the compose files. `docker-compose.yaml` contains MBTA values as a default.
+Configuration lives directly in the compose files. [`docker-compose.yaml`](https://github.com/mxdrew/gtfs-data-archiver/blob/main/docker-compose.yaml) contains MBTA values as a default.
 
 This project aims to adhere to the [MassDOT Developers License Agreement](https://cdn.mbta.com/sites/default/files/2023-08/mbta-massdot-develop-license-agreement.pdf). Any data collected is owned by the provider (MBTA & MassDOT) and is not claimed by this project.
+
+## Table of Contents
+
+- [Overview](#overview)
+- [System Architecture](#system-architecture)
+  - [High-Level Data Flow](#high-level-data-flow)
+  - [Core Components](#core-components)
+- [Data Flow Summary](#data-flow-summary)
+- [Data Schema](#data-schema)
+- [Directory Structure](#directory-structure)
+- [Key Guarantees](#key-guarantees)
+- [Failure Handling](#failure-handling)
+- [Runtime Model](#runtime-model)
+  - [Threads](#threads)
+  - [Scheduled Tasks](#scheduled-tasks)
+  - [Runtime Logs](#runtime-logs)
+- [Configuration](#configuration)
+  - [Required For Any Run](#required-for-any-run)
+  - [Recommended For Any Run](#recommended-for-any-run)
+  - [Required For Static GTFS Mode](#required-for-static-gtfs-mode)
+  - [Required Only For API-Backed Modes](#required-only-for-api-backed-modes)
+  - [Mode-Specific Variables](#mode-specific-variables)
+  - [Multiple Agencies](#multiple-agencies)
+- [Installation](#installation)
+  - [Docker (Recommended)](#docker-recommended)
+  - [Manual](#manual)
+- [Operational Notes](#operational-notes)
+- [Security Notes](#security-notes)
+- [Design Rationale](#design-rationale)
+- [Data Archive](#data-archive)
+- [Future Plans](#future-plans)
+- [Other Cool Links](#other-cool-links)
+- [Questions](#questions)
 
 ---
 
@@ -34,7 +67,7 @@ This project aims to adhere to the [MassDOT Developers License Agreement](https:
     parquet_compaction_worker
     │
     ├──► AGENCY_NAME_<endpoint>_<MMDDYYYY>.parquet
-    └──► AGENCY_NAME_gtfs_<table>_<MMDDYYYY>.parquet
+    └──► AGENCY_NAME_gtfs_<table>.parquet
 ```
 
 ### Core Components
@@ -46,8 +79,6 @@ This project aims to adhere to the [MassDOT Developers License Agreement](https:
 - **Scheduler** → snapshot + GTFS orchestration
 - **Queue System** → backpressure-safe buffering
 
----
-
 ## Data Flow Summary
 
 1. Data is ingested from SSE, REST snapshots, and enhanced feeds  
@@ -56,20 +87,16 @@ This project aims to adhere to the [MassDOT Developers License Agreement](https:
 4. Background worker compacts older logs into Parquet archives  
 5. Static GTFS datasets are periodically downloaded and converted  
 
----
-
 ## Data Schema
 
 All schema definitions are intentionally centralized in [**DATA.md**](https://github.com/mxdrew/gtfs-data-archiver/blob/main/DATA.md) to avoid duplication and drift.
 
-All generated files use the same `AGENCY_NAME_<source>_<MMDDYYYY>` prefix so archives from different agencies stay isolated and easy to scan.
+Event archives use the `AGENCY_NAME_<source>_<MMDDYYYY>` prefix so logs from different agencies stay isolated and easy to scan. Static GTFS uses stable per-table files named `AGENCY_NAME_gtfs_<table>.parquet`, with `first_logged` and `last_logged` metadata tracking the exact timestamp when each unique row was first and most recently seen.
 
 See:
 - `data/events/` → [DATA.md](https://github.com/mxdrew/gtfs-data-archiver/blob/main/DATA.md#1-dataevents-active-write-ahead-logs) (Active ingestion schema)
 - `data/archive/` → [DATA.md](https://github.com/mxdrew/gtfs-data-archiver/blob/main/DATA.md#2-dataarchive-compacted-event-logs) (Compacted analytical schema)
 - `data/archive/gtfs/` → [DATA.md](https://github.com/mxdrew/gtfs-data-archiver/blob/main/DATA.md#3-dataarchivegtfs-static-schedule-data) (Static GTFS schema)
-
----
 
 ## Directory Structure
 
@@ -80,8 +107,6 @@ See:
         └── gtfs/ (Static GTFS Parquet files)
 ```
 
----
-
 ## Key Guarantees
 
 - At-least-once delivery semantics  
@@ -90,16 +115,12 @@ See:
 - Automatic recovery of orphaned logs  
 - No ordering guarantees across streams or threads  
 
----
-
 ## Failure Handling
 
 - SSE streams automatically reconnect with backoff  
 - Partial writes are recovered on startup  
 - Parquet archives are merged and deduplicated on re-runs  
 - Queue buffers absorb temporary upstream outages  
-
----
 
 ## Runtime Model
 
@@ -123,8 +144,6 @@ See:
 - View it with `docker logs -f <container_name>` or Docker Desktop's Logs tab.
 - Keep `LOG_LEVEL` at `warning` or `errors` for normal runs. At `info`, output can grow very quickly during high-throughput stream activity and thus will be hard to keep track of.
 
----
-
 ## Configuration
 
 Configuration is defined directly in the compose file. `docker-compose.yaml` is the sample setup. It uses MBTA defaults for the API endpoints, feed URLs, stream lists, and tuning values, with `API_KEY` left blank.
@@ -132,7 +151,7 @@ Configuration is defined directly in the compose file. `docker-compose.yaml` is 
 The application reads only the values in the table below. Missing values are handled safely, and stream-only, snapshot-only, or GTFS-only runs are all supported by the toggles.
 
 | Variable | Purpose | Default in `docker-compose.yaml` |
-|----------|---------|----------------------------------|
+|-||-|
 | `API_KEY` | API authentication key | YOUR_API_KEY |
 | `SYNC_TIMEZONE` | [IANA timezone](https://en.wikipedia.org/wiki/List_of_tz_database_time_zones#List) used for scheduling and filenames | `America/New_York` |
 | `AGENCY_NAME` | Filename prefix for generated outputs | `MBTA` |
@@ -157,7 +176,7 @@ The application reads only the values in the table below. Missing values are han
 ### Required For Any Run
 
 | Variable | Description |
-|----------|-------------|
+|-|-|
 | `SYNC_TIMEZONE` | [IANA timezone](https://en.wikipedia.org/wiki/List_of_tz_database_time_zones#List) string used for scheduling and timestamp alignment |
 | `ARCHIVE_ZSTD_LEVEL` | Compression level for Parquet archives |
 | `LOG_LEVEL` | Logging verbosity (e.g., `info`, `warnings`, `errors`) |
@@ -165,26 +184,26 @@ The application reads only the values in the table below. Missing values are han
 ### Recommended For Any Run
 
 | Variable | Description |
-|----------|-------------|
+|-|-|
 | `AGENCY_NAME` | Prefix used in generated file names; defaults to `agency` if omitted |
 
 ### Required For Static GTFS Mode
 
 | Variable | Description |
-|----------|-------------|
+|-|-|
 | `GTFS_URL` | Static GTFS ZIP source |
 
 ### Required Only For API-Backed Modes
 
 | Variable | Description |
-|----------|-------------|
+|-|-|
 | `API_KEY` | API authentication key |
 | `BASE_URL` | Transit API base URL |
 
 ### Mode-Specific Variables
 
 | Variable | Description |
-|----------|-------------|
+|-|-|
 | `BASE_STREAMS` | SSE endpoints |
 | `ROUTE_STREAMS` | Route-batched SSE endpoints |
 | `SNAPSHOT_EPS` | Snapshot endpoints |
@@ -206,17 +225,88 @@ ENABLE_ENHANCED_STREAMS=false
 ENABLE_GTFS_STATIC=true
 ```
 
----
+### Multiple Agencies
+
+For static GTFS only, it is fine to keep multiple agencies in one compose file as separate service blocks. For live streams, separate compose files are the recommended production setup.
+
+Separate containers in the same Compose stack are still independent; splitting compose files is about operational isolation, not a hard technical requirement.
+
+- Static-only: one compose file with multiple service blocks is usually fine and easy to manage.
+- Live streams: separate compose files are recommended so restarts, logs, and resource limits stay isolated per agency.
+- In either case, give each service or container a unique `container_name` and, if needed, a unique Compose project name with `-p`.
+- Point each agency at its own upstream URLs and GTFS ZIP source.
+- Keep the same `./data` mount if you want all output in one place, because the archive naming already prefixes files by agency.
+
+Why this is the recommendation:
+
+- Live streams are easier to restart, debug, and tune when each agency is isolated in its own compose file.
+- Shared live stacks can entangle logs, restarts, and backpressure across agencies.
+- Static-only downloads are much less sensitive, so multiple agencies in one file are usually fine there.
+
+#### Example Compose Files
+
+Example for separate compose files:
+
+```bash
+cp docker-compose.yaml docker-compose-lrta.yaml
+docker compose -f docker-compose.yaml -p mbta up -d --build
+docker compose -f docker-compose-lrta.yaml -p lrta up -d --build
+```
+
+In the copied compose file, update the values that make the agency unique: `container_name`, `AGENCY_NAME`, `BASE_URL`, `GTFS_URL`, `BASE_STREAMS`, `ROUTE_STREAMS`, `SNAPSHOT_EPS`, `VEHICLES_ENHANCED_URL`, `ALERTS_ENHANCED_URL`, `TRIPS_ENHANCED_URL`, and the `ENABLE_*` flags.
+
+Example for static GTFS only in one compose file:
+
+```yaml
+services:
+  mbta-archiver:
+    build: .
+    container_name: mbta-data-archiver
+    restart: unless-stopped
+    environment:
+      - SYNC_TIMEZONE=America/New_York
+      - AGENCY_NAME=MBTA
+      - GTFS_URL=https://cdn.mbta.com/MBTA_GTFS.zip
+      - ENABLE_BASE_STREAMS=false
+      - ENABLE_ROUTE_STREAMS=false
+      - ENABLE_SNAPSHOT_PULLS=false
+      - ENABLE_ENHANCED_STREAMS=false
+      - ENABLE_GTFS_STATIC=true
+    volumes:
+      - ./data:/app/data
+  bat-archiver:
+    build: .
+    container_name: bat-data-archiver
+    restart: unless-stopped
+    environment:
+      - SYNC_TIMEZONE=America/New_York
+      - AGENCY_NAME=BAT
+      - GTFS_URL=https://data.trilliumtransit.com/gtfs/brockton-ma-us/brockton-ma-us.zip
+      - ENABLE_BASE_STREAMS=false
+      - ENABLE_ROUTE_STREAMS=false
+      - ENABLE_SNAPSHOT_PULLS=false
+      - ENABLE_ENHANCED_STREAMS=false
+      - ENABLE_GTFS_STATIC=true
+    volumes:
+      - ./data:/app/data
+```
+Which would be built and launched with:
+```bash
+docker compose -f compose-ma-rtas.yaml up -d --build
+```
+
 
 ## Installation
 
-### Docker (recommended)
+### Docker (Recommended)
 
 ```bash
 git clone https://github.com/mxdrew/gtfs-data-archiver.git
 cd gtfs-data-archiver
 docker compose up -d --build
 ```
+
+If you add another agency later, use the copy pattern shown above in the Multiple Agencies section, then update the agency-specific values there.
 
 ### Manual
 
@@ -227,7 +317,9 @@ pip install -r requirements.txt
 python gtfs_archiver.py
 ```
 
----
+For manual runs, use the included `.env` sample as the starting point: [`.env`](https://github.com/mxdrew/gtfs-data-archiver/blob/main/.env). Update the values that make the agency unique, especially `AGENCY_NAME`, `SYNC_TIMEZONE`, `API_KEY`, `BASE_URL`, `GTFS_URL`, `BASE_STREAMS`, `ROUTE_STREAMS`, `SNAPSHOT_EPS`, the `VEHICLES_ENHANCED_URL`/`ALERTS_ENHANCED_URL`/`TRIPS_ENHANCED_URL` entries, and the `ENABLE_*` flags. I did not try multiple agencies with this, but I'd imagine in order to do so you'd need to clone `gtfs_archiver.py` and `.env`, rename them, update the new `.env` file, and then launch the cloned script.
+
+
 
 
 ## Operational Notes
@@ -257,7 +349,7 @@ The data archiver began continuous operation on May 26, 2026 - focused on MBTA d
 
 More info, such as schema definitions, file formats, period of time captured, and downtime, will be available [here](https://github.com/mxdrew/gtfs-data-logger/blob/main/DATA.md).
 
----
+
 
 ## Future Plans
 
@@ -265,9 +357,8 @@ More info, such as schema definitions, file formats, period of time captured, an
 - Build an MBTA system map or line map that shows train positions on a given line in real time.
 - Explore MBTA's historical performance data.
 - Explore other agencies through the [Mobility Database](https://mobilitydatabase.org/) or [Transitland](https://www.transit.land/).
-- Allow for logging multiple agencies at once.
 
----
+
 
 ## Other Cool Links
 
@@ -287,7 +378,9 @@ Other useful places to look are:
 
 - [MBTA Historical Performance Data](https://www.mbta.com/developers/historical-performance-data): Historical performance data and related developer resources.
 
----
+- [Public transportation in Massachusetts](https://www.mass.gov/info-details/public-transportation-in-massachusetts#regional-transit-authorities): Overview of the MBTA and the 15 Regional Transit Authorities, including a map of service areas, member towns/cities/areas, and contact information.
+
+
 
 ## Questions
 

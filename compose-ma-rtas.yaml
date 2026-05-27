@@ -1,0 +1,149 @@
+name: gtfs-archiver
+
+# 1. Define shared container settings in an ignored extension field
+x-shared-base: &shared-base
+  build: .
+  restart: unless-stopped
+  volumes:
+    - ./data:/app/data
+
+# 2. Define shared environment variables in an ignored extension field
+x-shared-env: &shared-env
+  SYNC_TIMEZONE: America/New_York
+  ENABLE_BASE_STREAMS: "false"
+  ENABLE_ROUTE_STREAMS: "false"
+  ENABLE_SNAPSHOT_PULLS: "false"
+  ENABLE_ENHANCED_STREAMS: "false"
+  ENABLE_GTFS_STATIC: "true"
+  LOG_LEVEL: warning
+  DEFAULT_BATCH_SIZE: "25"
+  ARCHIVE_ZSTD_LEVEL: "10"
+
+services:
+  mbta-archiver:
+    <<: *shared-base
+    container_name: mbta-data-archiver
+    environment:
+      <<: *shared-env
+      AGENCY_NAME: MBTA
+      GTFS_URL: https://cdn.mbta.com/MBTA_GTFS.zip
+
+  brta-archiver:
+    <<: *shared-base
+    container_name: brta-data-archiver
+    environment:
+      <<: *shared-env
+      AGENCY_NAME: BRTA
+      GTFS_URL: https://data.trilliumtransit.com/gtfs/berkshire-ma-us/berkshire-ma-us.zip
+
+  bat-archiver:
+    <<: *shared-base
+    container_name: bat-data-archiver
+    environment:
+      <<: *shared-env
+      AGENCY_NAME: BAT
+      GTFS_URL: https://data.trilliumtransit.com/gtfs/brockton-ma-us/brockton-ma-us.zip
+
+  cata-archiver:
+    <<: *shared-base
+    container_name: cata-data-archiver
+    environment:
+      <<: *shared-env
+      AGENCY_NAME: CATA
+      GTFS_URL: https://data.trilliumtransit.com/gtfs/capeann-ma-us/capeann-ma-us.zip
+
+  ccrta-archiver:
+    <<: *shared-base
+    container_name: ccrta-data-archiver
+    environment:
+      <<: *shared-env
+      AGENCY_NAME: CCRTA
+      GTFS_URL: https://data.trilliumtransit.com/gtfs/capecod-ma-us/capecod-ma-us.zip
+
+  frta-archiver:
+    <<: *shared-base
+    container_name: frta-data-archiver
+    environment:
+      <<: *shared-env
+      AGENCY_NAME: FRTA
+      GTFS_URL: https://data.trilliumtransit.com/gtfs/frta-ma-us/frta-ma-us.zip
+
+  lrta-archiver:
+    <<: *shared-base
+    container_name: lrta-data-archiver
+    environment:
+      <<: *shared-env
+      AGENCY_NAME: LRTA
+      GTFS_URL: https://data.trilliumtransit.com/gtfs/lowell-ma-us/lowell-ma-us.zip
+
+  mvrta-archiver:
+    <<: *shared-base
+    container_name: mvrta-data-archiver
+    environment:
+      <<: *shared-env
+      AGENCY_NAME: MVRTA
+      GTFS_URL: https://data.trilliumtransit.com/gtfs/merrimackvalley-ma-us/merrimackvalley-ma-us.zip
+
+  mwrta-archiver:
+    <<: *shared-base
+    container_name: mwrta-data-archiver
+    environment:
+      <<: *shared-env
+      AGENCY_NAME: MWRTA
+      GTFS_URL: http://vc.mwrta.com/gtfs/google_transit.zip
+
+  mart-archiver:
+    <<: *shared-base
+    container_name: mart-data-archiver
+    environment:
+      <<: *shared-env
+      AGENCY_NAME: MART
+      GTFS_URL: https://data.trilliumtransit.com/gtfs/montachusett-ma-us/montachusett-ma-us.zip
+
+  nrta-archiver:
+    <<: *shared-base
+    container_name: nrta-data-archiver
+    environment:
+      <<: *shared-env
+      AGENCY_NAME: NRTA
+      GTFS_URL: https://nrtawave.transloc.com/Secure/Admin/Reports/GTFSDownload.aspx
+
+  pvta-archiver:
+    <<: *shared-base
+    container_name: pvta-data-archiver
+    environment:
+      <<: *shared-env
+      AGENCY_NAME: PVTA
+      GTFS_URL: http://www.pvta.com/g_trans/google_transit.zip
+
+  vta-archiver:
+    <<: *shared-base
+    container_name: vta-data-archiver
+    environment:
+      <<: *shared-env
+      AGENCY_NAME: VTA
+      GTFS_URL: https://data.trilliumtransit.com/gtfs/marthasvineyard-ma-us/marthasvineyard-ma-us.zip
+
+  wrta-archiver:
+    <<: *shared-base
+    container_name: wrta-data-archiver
+    environment:
+      <<: *shared-env
+      AGENCY_NAME: WRTA
+      GTFS_URL: https://data.trilliumtransit.com/gtfs/wrta-ma-us/wrta-ma-us.zip
+
+  yankee-archiver:
+    <<: *shared-base
+    container_name: yankee-archiver
+    environment:
+      <<: *shared-env
+      AGENCY_NAME: YANKEE
+      GTFS_URL: https://data.trilliumtransit.com/gtfs/yankeeline-ma-us/yankeeline-ma-us.zip
+
+  massport-archiver:
+    <<: *shared-base
+    container_name: massport-archiver
+    environment:
+      <<: *shared-env
+      AGENCY_NAME: MASSPORT
+      GTFS_URL: https://data.trilliumtransit.com/gtfs/massport-ma-us/massport-ma-us.zip

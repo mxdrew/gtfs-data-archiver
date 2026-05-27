@@ -2,12 +2,13 @@
 # Author Information:
 # Drew Mulcare
 # github@mxdrew.com
-# May 25, 2026 (Last updated May 26, 2026)
+# May 25, 2026 (Last updated May 27, 2026)
 #
 # Description:
-# Lightweight, single-file data ingestion engine for real-time and static transit feeds. 
+# Lightweight, single-process data ingestion engine for real-time and static transit feeds. 
 # Captures live Server-Sent Events (SSE) with dynamic route batching, polls enhanced bulk 
-# JSON endpoints, and executes hourly contextual REST snapshots across the system.
+# JSON endpoints, executes hourly contextual REST snapshots, and manages cumulative static GTFS 
+# history for each agency.
 #
 # Data Integrity & Storage:
 # Implements a crash-proof Write-Ahead Log (WAL) pattern. All network records are instantly 
@@ -18,9 +19,12 @@
 #
 # If a Parquet archive already exists for a given day (due to container restarts), the worker 
 # merges the JSONL data into the existing Parquet file and deduplicates records using a SHA-256 hash.
+# Static GTFS snapshots are merged into stable per-table Parquet files under data/archive/gtfs/.
+# Identical rows are stored once using SHA-256 deduplication, with `first_logged` and 
+# `last_logged` metadata preserving when each unique record first appeared and was most recently seen.
 #
 # Startup routines include an orphaned JSONL recovery sweep and automated scheduling for 
-# twice-daily GTFS static package downloads (03:00 and 15:00 local time) routed to data/gtfs/.
+# twice-daily GTFS static package downloads (03:00 and 15:00 local time) routed to data/archive/gtfs/.
 # All timestamps and rotation boundaries strictly adhere to the configured timezone.
 #
 # Output Schema:
@@ -106,6 +110,7 @@ def safe_prefix(value):
 
 
 AGENCY_PREFIX = safe_prefix(AGENCY_NAME)
+AGENCY_LOG_LABEL = AGENCY_NAME.strip() or AGENCY_PREFIX
 
 DATA_DIR = Path("data")
 EVENTS_DIR = DATA_DIR / "events"
@@ -120,6 +125,11 @@ ENABLE_ROUTE_STREAMS = env_flag("ENABLE_ROUTE_STREAMS", "true")
 ENABLE_SNAPSHOT_PULLS = env_flag("ENABLE_SNAPSHOT_PULLS", "true")
 ENABLE_ENHANCED_STREAMS = env_flag("ENABLE_ENHANCED_STREAMS", "true")
 ENABLE_GTFS_STATIC = env_flag("ENABLE_GTFS_STATIC", "true")
+
+GTFS_DOWNLOAD_HEADERS = {
+    "Accept": "application/zip,application/octet-stream,*/*",
+    "User-Agent": "gtfs-data-archiver/1.0 (+https://github.com/mxdrew/gtfs-data-archiver)",
+}
 
 # 1. Base Streams
 BASE_STREAMS = env_list("BASE_STREAMS")
@@ -154,19 +164,130 @@ def dated_output_filename(stem, extension):
     date_str = datetime.now(LOCAL_TZ).strftime("%m%d%Y")
     return f"{AGENCY_PREFIX}_{stem}_{date_str}.{extension}"
 
+
+def filename_date_key(filename):
+    try:
+        return filename.rsplit("_", 1)[-1].split(".", 1)[0]
+    except Exception:
+        return ""
+
+
+def close_stale_event_handles(handles, current_date_key):
+    stale_filenames = [name for name in handles if filename_date_key(name) != current_date_key]
+    for filename in stale_filenames:
+        try:
+            handles[filename].close()
+        finally:
+            del handles[filename]
+
+
+def gtfs_row_hash(table_name, row_data):
+    normalized_row = {}
+    for key, value in row_data.items():
+        normalized_row[key] = None if pd.isna(value) else value
+
+    payload = json.dumps(
+        {"table": table_name, "row": normalized_row},
+        sort_keys=True,
+        separators=(",", ":"),
+        default=str,
+    )
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def prepare_gtfs_snapshot(df, table_name, logged_date):
+    frame = df.copy()
+    records = [dict(zip(frame.columns, row)) for row in frame.itertuples(index=False, name=None)]
+    frame["hash_id"] = [gtfs_row_hash(table_name, record) for record in records]
+    frame["first_logged"] = logged_date
+    frame["last_logged"] = logged_date
+    return frame
+
+
+def normalize_gtfs_logged_dates(series):
+    normalized_values = []
+    for value in series:
+        if pd.isna(value):
+            normalized_values.append(pd.NaT)
+            continue
+
+        parsed = pd.to_datetime(value, errors="coerce")
+        if pd.isna(parsed):
+            parsed = pd.to_datetime(value, format="%m%d%Y", errors="coerce")
+
+        if pd.isna(parsed):
+            normalized_values.append(pd.NaT)
+            continue
+
+        if getattr(parsed, "tzinfo", None) is None:
+            parsed = parsed.tz_localize(LOCAL_TZ)
+        else:
+            parsed = parsed.tz_convert(LOCAL_TZ)
+
+        normalized_values.append(parsed)
+
+    return pd.Series(normalized_values, index=series.index)
+
+
+def merge_gtfs_snapshots(existing_df, new_df, table_name, logged_date):
+    frames = []
+
+    for frame in (existing_df, new_df):
+        if frame is not None and not frame.empty:
+            frames.append(frame.copy())
+
+    if not frames:
+        return None
+
+    combined = pd.concat(frames, ignore_index=True, sort=False)
+
+    if "hash_id" not in combined.columns:
+        data_columns = [column for column in combined.columns if column not in {"first_logged", "last_logged"}]
+        combined["hash_id"] = [gtfs_row_hash(table_name, record) for record in combined[data_columns].to_dict(orient="records")]
+
+    if "first_logged" not in combined.columns:
+        combined["first_logged"] = logged_date
+    if "last_logged" not in combined.columns:
+        combined["last_logged"] = combined["first_logged"]
+
+    combined["first_logged"] = normalize_gtfs_logged_dates(combined["first_logged"])
+    combined["last_logged"] = normalize_gtfs_logged_dates(combined["last_logged"])
+
+    if combined["first_logged"].isna().all():
+        combined["first_logged"] = pd.to_datetime(logged_date, format="%Y-%m-%d", errors="coerce")
+    if combined["last_logged"].isna().all():
+        combined["last_logged"] = pd.to_datetime(logged_date, format="%Y-%m-%d", errors="coerce")
+
+    agg_map = {}
+    for column in combined.columns:
+        if column == "hash_id":
+            continue
+        if column == "first_logged":
+            agg_map[column] = "min"
+        elif column == "last_logged":
+            agg_map[column] = "max"
+        else:
+            agg_map[column] = "first"
+
+    merged = combined.groupby("hash_id", as_index=False).agg(agg_map)
+    merged["first_logged"] = normalize_gtfs_logged_dates(merged["first_logged"]).dt.strftime("%Y-%m-%dT%H:%M:%S%z")
+    merged["last_logged"] = normalize_gtfs_logged_dates(merged["last_logged"]).dt.strftime("%Y-%m-%dT%H:%M:%S%z")
+    return merged
+
 #### LOGGING ####
 
 def log(message, is_error=False, is_warning=False):
     if LOG_LEVEL == "errors" and not is_error and not is_warning:
-        return # Suppress standard info logs
+        return
         
     ts = datetime.now(LOCAL_TZ).strftime("%H:%M:%S")
+    agency_prefix = f"[{AGENCY_LOG_LABEL}] " if AGENCY_LOG_LABEL else ""
     if is_error:
-        print(f"[{ts}] 🔴 ERROR: {message}")
+        print(f"[{ts}] 🔴 ERROR {agency_prefix}{message}".rstrip())
     elif is_warning:
-        print(f"[{ts}] 🟡 WARNING: {message}")
+        print(f"[{ts}] 🟡 WARNING {agency_prefix}{message}".rstrip())
     else:
-        print(f"[{ts}] 🟢 {message}")
+        print(f"[{ts}] 🟢 {agency_prefix}{message}".rstrip())
 
 #### WRITER & COMPACTION ####
 
@@ -175,22 +296,25 @@ def writer_worker():
     log("Writer thread engaged. Streaming to JSONL.")
     handles = {}
     
-    # Capture the current date once for the 'first_logged' field
+    # Capture the current date once for the `first_logged` field.
     first_logged_date = datetime.now(LOCAL_TZ).strftime("%Y-%m-%d")
     
     try:
         while not stop_event.is_set() or not write_queue.empty():
             try:
+                current_date_key = datetime.now(LOCAL_TZ).strftime("%m%d%Y")
+                close_stale_event_handles(handles, current_date_key)
+
                 endpoint, evt_type, record_data = write_queue.get(timeout=1.0)
                 
-                # 1. Deterministic hash (Excludes timestamp/log date to allow deduplication across days)
+                # Deterministic hash excludes timestamp and log date so deduplication works across days.
                 payload_str = f"{endpoint}|{evt_type}|{record_data.get('id', '')}|{json.dumps(record_data, sort_keys=True)}"
                 hash_id = hashlib.sha256(payload_str.encode("utf-8")).hexdigest()
                 
-                # 2. Format to schema with historical tracking
+                # Format the record to schema with historical tracking.
                 record = {
                     "hash_id": hash_id,
-                    "first_logged": first_logged_date, # This date is stable for the life of the record
+                    "first_logged": first_logged_date,  # This date is stable for the life of the record.
                     "ts": datetime.now(LOCAL_TZ).isoformat(),
                     "event": evt_type,
                     "id": str(record_data.get("id", "")),
@@ -216,7 +340,7 @@ def writer_worker():
             f.close()
 
 def parquet_compaction_worker():
-    """Compresses orphaned/yesterday's JSONL files, merges if Parquet exists, and archives."""
+    """Streams orphaned/yesterday's JSONL files into Parquet and removes the source after success."""
     log("Parquet compaction watchdog and recovery sweep active.")
     while not stop_event.is_set():
         try:
@@ -225,37 +349,55 @@ def parquet_compaction_worker():
             for file in EVENTS_DIR.glob("*.jsonl"):
                 if today_str not in file.name:
                     log(f"Compacting orphaned/rotated {file.name} to Parquet archive...")
+                    temp_path = None
+                    writer = None
                     try:
-                        df = pd.read_json(file, lines=True)
-                        
-                        if "data" in df.columns:
-                            df["data"] = df["data"].apply(lambda x: json.dumps(x) if isinstance(x, dict) else str(x))
-                            
                         parquet_filename = file.with_suffix(".parquet").name
                         parquet_path = ARCHIVE_DIR / parquet_filename
-                        
-                        # Merge and deduplicate if the archive file already exists
-                        if parquet_path.exists():
-                            existing_df = pd.read_parquet(parquet_path)
-                            combined_df = pd.concat([existing_df, df], ignore_index=True)
-                            
-                            if "hash_id" in combined_df.columns:
-                                combined_df = combined_df.drop_duplicates(subset=["hash_id"], keep="last")
-                            
-                            table = pa.Table.from_pandas(combined_df)
-                        else:
-                            table = pa.Table.from_pandas(df)
-                        
-                        pq.write_table(table, parquet_path, compression="zstd", compression_level=ARCHIVE_ZSTD_LEVEL)
-                        
+
+                        temp_path = parquet_path.with_name(f"{parquet_path.name}.tmp")
+                        if temp_path.exists():
+                            temp_path.unlink()
+
+                        row_count = 0
+
+                        for chunk in pd.read_json(file, lines=True, chunksize=100000):
+                            if "data" in chunk.columns:
+                                chunk["data"] = chunk["data"].apply(lambda x: json.dumps(x) if isinstance(x, dict) else str(x))
+
+                            table = pa.Table.from_pandas(chunk, preserve_index=False)
+
+                            if writer is None:
+                                writer = pq.ParquetWriter(
+                                    temp_path,
+                                    table.schema,
+                                    compression="zstd",
+                                    compression_level=ARCHIVE_ZSTD_LEVEL,
+                                )
+
+                            writer.write_table(table)
+                            row_count += len(chunk)
+
+                        if writer is None:
+                            log(f"Skipping empty JSONL file: {file.name}", is_warning=True)
+                            continue
+
+                        writer.close()
+                        writer = None
+                        temp_path.replace(parquet_path)
                         file.unlink()
-                        log(f"Success: {file.name} compacted and merged into {parquet_path.name}.")
+                        log(f"Success: {file.name} compacted into {parquet_path.name} with {row_count} rows.")
                     except Exception as e:
                         log(f"Failed to compact {file.name}: {e}", is_error=True)
+                    finally:
+                        if writer is not None:
+                            writer.close()
+                        if temp_path is not None and temp_path.exists() and file.exists():
+                            temp_path.unlink()
         except Exception as e:
             log(f"Compaction thread error: {e}", is_error=True)
             
-        for _ in range(3600):
+        for _ in range(60):
             if stop_event.is_set(): break
             time.sleep(1)
 
@@ -355,15 +497,15 @@ def fetch_snapshots():
         except Exception: pass
 
 def fetch_gtfs_static():
-    """Runs twice a day. Downloads GTFS zip, converts to Parquet."""
+    """Runs twice a day. Downloads GTFS zip, deduplicates rows, and updates first/last seen dates."""
     if not GTFS_URL or not ENABLE_GTFS_STATIC:
         return
     log("Pulling static GTFS assets...")
     try:
-        res = requests.get(GTFS_URL, timeout=120)
+        res = requests.get(GTFS_URL, headers=GTFS_DOWNLOAD_HEADERS, timeout=120)
         res.raise_for_status()
         
-        date_str = datetime.now(LOCAL_TZ).strftime("%m%d%Y")
+        logged_at = datetime.now(LOCAL_TZ).isoformat(timespec="seconds")
         z = zipfile.ZipFile(io.BytesIO(res.content))
         
         for file_name in z.namelist():
@@ -371,10 +513,23 @@ def fetch_gtfs_static():
                 table_name = file_name.replace(".txt", "")
                 
                 df = pd.read_csv(z.open(file_name), dtype=str, low_memory=False)
-                
-                out_path = GTFS_DIR / f"{AGENCY_PREFIX}_gtfs_{table_name}_{date_str}.parquet"
-                table = pa.Table.from_pandas(df)
-                pq.write_table(table, out_path, compression="zstd", compression_level=ARCHIVE_ZSTD_LEVEL)
+                out_path = GTFS_DIR / f"{AGENCY_PREFIX}_gtfs_{table_name}.parquet"
+
+                current_df = prepare_gtfs_snapshot(df, table_name, logged_at)
+                existing_df = pd.read_parquet(out_path) if out_path.exists() else None
+                merged_df = merge_gtfs_snapshots(existing_df, current_df, table_name, logged_at)
+
+                if merged_df is None:
+                    log(f"Skipping empty GTFS table: {table_name}", is_warning=True)
+                    continue
+
+                temp_path = out_path.with_name(f"{out_path.name}.tmp")
+                if temp_path.exists():
+                    temp_path.unlink()
+
+                table = pa.Table.from_pandas(merged_df, preserve_index=False)
+                pq.write_table(table, temp_path, compression="zstd", compression_level=ARCHIVE_ZSTD_LEVEL)
+                temp_path.replace(out_path)
                 
         log("Static GTFS update complete.")
     except Exception as e:
