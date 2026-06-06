@@ -9,6 +9,12 @@ __pycache__/
 *.pyd
 .pytest_cache/
 
+*.db*
+*.tar*
+*.json*
+
 LICENSE
 README.md
 .gitignore
+
+otherScripts/

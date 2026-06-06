@@ -35,6 +35,7 @@ This project aims to adhere to the [MassDOT Developers License Agreement](https:
   - [Required Only For API-Backed Modes](#required-only-for-api-backed-modes)
   - [Mode-Specific Variables](#mode-specific-variables)
   - [Multiple Agencies](#multiple-agencies)
+- [Extra Scripts](#extra-scripts)
 - [Installation](#installation)
   - [Docker (Recommended)](#docker-recommended)
   - [Manual](#manual)
@@ -97,14 +98,16 @@ See:
 - `data/events/` → [DATA.md](https://github.com/mxdrew/gtfs-data-archiver/blob/main/DATA.md#1-dataevents-active-write-ahead-logs) (Active ingestion schema)
 - `data/archive/` → [DATA.md](https://github.com/mxdrew/gtfs-data-archiver/blob/main/DATA.md#2-dataarchive-compacted-event-logs) (Compacted analytical schema)
 - `data/archive/gtfs/` → [DATA.md](https://github.com/mxdrew/gtfs-data-archiver/blob/main/DATA.md#3-dataarchivegtfs-static-schedule-data) (Static GTFS schema)
+- `data/archive/combinedEvents/` → [DATA.md](https://github.com/mxdrew/gtfs-data-archiver/blob/main/DATA.md#4-dataarchivecombinedevents-merged-historical-outputs) (Merged historical outputs)
 
 ## Directory Structure
 
 ```
     data/
-    ├── events/   (Active daily JSONL files)
-    └── archive/  (Compacted Parquet files + Static GTFS Parquet files)
-        └── gtfs/ (Static GTFS Parquet files)
+  ├── events/    (Active daily JSONL files)
+  └── archive/   (Compacted Parquet files + static GTFS + merged historical outputs)
+    ├── gtfs/  (Static GTFS Parquet files)
+    └── combinedEvents/  (Merged historical parquet outputs)
 ```
 
 ## Key Guarantees
@@ -292,9 +295,43 @@ services:
 ```
 Which would be built and launched with:
 ```bash
-docker compose -f compose-ma-rtas.yaml up -d --build
+docker compose -f docker-compose.yaml up -d --build
 ```
 
+## Extra Scripts
+
+The `otherScripts/` folder contains dedicated ingestion runners for agency-specific platforms and one multi-agency orchestrator. 
+
+_**DISCLAIMER**: <u>These should be used at your own discretion and risk</u>. They are not maintained. They are also not tested to the same degree as the main `gtfs_archiver.py` script, so they may contain bugs or issues that could cause data loss or other problems. Especially as not all of the APIs or endpoints queried are necessarily supported by their providers (i.e., they are meant to feed their own realtime maps, not necessairly to be queried by the public). If you choose to use anything in `otherScripts/`, please review the code carefully, consider if you _<u>realllllyyyyy</u>_ want to run them, and also consider running them in a test environment first. These are really only included for informational purposes._
+
+- `otherScripts/bustime.py`: Clever Devices BusTime ingestion for the configured agency feed.
+- `otherScripts/massport.py`: Massport and Logan Express polling workflow.
+- `otherScripts/passigo.py`: PassioGo ingestion for configured agency IDs.
+- `otherScripts/routematch.py`: RouteMatch ingestion for configured agency/feed endpoints.
+- `otherScripts/ma_gtfs_archiver.py`: multi-agency runner for static GTFS pulls (MBTA, 14 Massachusetts Regional Transit Agencies, Yankee Line, and Massport) with optional MBTA live ingestion.
+
+Everything in `otherScripts` reads environment-based configuration and writes outputs under the configured data directory.
+
+### Root `.env` Variables `otherScripts`
+The root `.env` includes variables for scripts tracked in git (non-ignored scripts):
+
+- `gtfs_archiver.py`:
+`API_KEY`, `SYNC_TIMEZONE`, `AGENCY_NAME`, `BASE_URL`, `GTFS_URL`, `ENABLE_BASE_STREAMS`, `ENABLE_ROUTE_STREAMS`, `ENABLE_SNAPSHOT_PULLS`, `ENABLE_ENHANCED_STREAMS`, `ENABLE_GTFS_STATIC`, `BASE_STREAMS`, `ROUTE_STREAMS`, `SNAPSHOT_EPS`, `ENHANCED_POLL_INTERVAL_SECONDS`, `VEHICLES_ENHANCED_URL`, `ALERTS_ENHANCED_URL`, `TRIPS_ENHANCED_URL`, `DEFAULT_BATCH_SIZE`, `LOG_LEVEL`, `ARCHIVE_ZSTD_LEVEL`
+
+- `otherScripts/ma_gtfs_archiver.py`:
+`MBTA_API_KEY`, `GTFS_DOWNLOAD_USER_AGENT`, plus shared runtime variables `SYNC_TIMEZONE`, `ARCHIVE_ZSTD_LEVEL`, `LOG_LEVEL`
+
+- `otherScripts/bustime.py`:
+`BUSTIME_AGENCY`, `BUSTIME_BASE_URL`, `BUSTIME_API_KEY`, `GTFS_FEED_URL`, `VERBOSE_LOGGING`, plus shared runtime variables `SYNC_TIMEZONE`, `ARCHIVE_ZSTD_LEVEL`, `DATA_DIR`, `DATA_DIR_WSL`
+
+- `otherScripts/routematch.py`:
+`ROUTEMATCH_AGENCY`, `ROUTEMATCH_BASE_URL`, `ROUTEMATCH_REFERER`, plus shared runtime variables `SYNC_TIMEZONE`, `ARCHIVE_ZSTD_LEVEL`, `DATA_DIR`, `DATA_DIR_WSL`
+
+- `otherScripts/passigo.py`:
+`PASSIOGO_AGENCY_CATALOG`, `PASSIOGO_TARGET_AGENCY_IDS`, `PASSIOGO_SAVE_ACTIVE_JSON`, plus shared runtime variables `SYNC_TIMEZONE`, `ARCHIVE_ZSTD_LEVEL`, `DATA_DIR`, `DATA_DIR_WSL`
+
+- `otherScripts/massport.py`:
+uses fixed in-script agency and polling values; only shared runtime variables apply (`SYNC_TIMEZONE`, `ARCHIVE_ZSTD_LEVEL`, `DATA_DIR`, `DATA_DIR_WSL`).
 
 ## Installation
 
@@ -319,9 +356,6 @@ python gtfs_archiver.py
 
 For manual runs, use the included `.env` sample as the starting point: [`.env`](https://github.com/mxdrew/gtfs-data-archiver/blob/main/.env). Update the values that make the agency unique, especially `AGENCY_NAME`, `SYNC_TIMEZONE`, `API_KEY`, `BASE_URL`, `GTFS_URL`, `BASE_STREAMS`, `ROUTE_STREAMS`, `SNAPSHOT_EPS`, the `VEHICLES_ENHANCED_URL`/`ALERTS_ENHANCED_URL`/`TRIPS_ENHANCED_URL` entries, and the `ENABLE_*` flags. I did not try multiple agencies with this, but I'd imagine in order to do so you'd need to clone `gtfs_archiver.py` and `.env`, rename them, update the new `.env` file, and then launch the cloned script.
 
-
-
-
 ## Operational Notes
 
 This system prioritizes durability and recoverability over strict consistency or ordering guarantees. It is designed for continuous ingestion rather than transactional processing.
@@ -330,15 +364,6 @@ This system prioritizes durability and recoverability over strict consistency or
 - Uses append-only disk writes for durability
 - Queue-based buffering prevents ingestion blocking
 - Optimized for high-frequency transit data streams
-
-## Security Notes
-
-- API keys are only read from environment variables
-- No secrets are persisted to disk
-- All upstream requests use header-based authentication
-
-## Design Rationale
-
 - JSONL provides durable write-ahead logging and recovery
 - Parquet enables efficient analytics and compression
 - Separation of WAL and archive layers improves reliability and performance
@@ -349,16 +374,13 @@ The data archiver began continuous operation on May 26, 2026 - focused on MBTA d
 
 More info, such as schema definitions, file formats, period of time captured, and downtime, will be available [here](https://github.com/mxdrew/gtfs-data-logger/blob/main/DATA.md).
 
-
-
 ## Future Plans
 
 - Run analytics on the collected data.
 - Build an MBTA system map or line map that shows train positions on a given line in real time.
-- Explore MBTA's historical performance data.
+- Explore the MBTA's [MBTA Historical Performance Data](https://www.mbta.com/developers/historical-performance-data).
 - Explore other agencies through the [Mobility Database](https://mobilitydatabase.org/) or [Transitland](https://www.transit.land/).
-
-
+- Explore data from [opentransportdata.swiss](https://opentransportdata.swiss/).
 
 ## Other Cool Links
 
@@ -380,7 +402,7 @@ Other useful places to look are:
 
 - [Public transportation in Massachusetts](https://www.mass.gov/info-details/public-transportation-in-massachusetts#regional-transit-authorities): Overview of the MBTA and the 15 Regional Transit Authorities, including a map of service areas, member towns/cities/areas, and contact information.
 
-
+- [opentransportdata.swiss](https://opentransportdata.swiss/): The open data platform for customer information on Swiss public transport, operated on behalf of the Swiss Federal Office of Transport (FOT). Contains everything from Static and Realtime GTFS data to road traffic counters, traffic light data, and train composititon data.
 
 ## Questions
 

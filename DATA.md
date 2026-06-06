@@ -5,37 +5,40 @@
 | Date | Event | Agency | Base Streams | Route Streams | Snapshot Streams | Enhanced Streams | Static GTFS | Notes |
 | :--: | :---: | :----: | :----------: | :-----------: | :--------------: | :--------------: | :---------: | :---: |
 | May 28, 2026 | Archiving Started | [MBTA](https://www.mbta.com/) | `vehicles`, `alerts` | `predictions`, `stop_events` | `schedules`, `services`, `shapes`, `trips`, `lines`, `routes`, `route_patterns`, `facilities`, `stops`, `live_facilities` | `vehicles_enhanced`, `alerts_enhanced`, `trips_enhanced` | [MBTA_GTFS.zip](https://cdn.mbta.com/MBTA_GTFS.zip) | There may be a few records from May 25-27, 2026 due to building and testing of the script.|
-| May 28, 2026 | Archiving Started | [BAT](https://www.ridebat.com/) | — | — | — | — | [brockton-ma-us.zip](https://data.trilliumtransit.com/gtfs/brockton-ma-us/brockton-ma-us.zip) | Static GTFS only |
-| May 28, 2026 | Archiving Started | [BRTA](https://berkshirerta.com/) | — | — | — | — | [berkshire-ma-us.zip](https://data.trilliumtransit.com/gtfs/berkshire-ma-us/berkshire-ma-us.zip) | Static GTFS only |
+| May 28, 2026 | Archiving Started | [BAT](https://www.ridebat.com/) | — | — | — | — | [brockton-ma-us.zip](https://data.trilliumtransit.com/gtfs/brockton-ma-us/brockton-ma-us.zip) | Static GTFS only - live platform noted: PassioGo |
+| May 28, 2026 | Archiving Started | [BRTA](https://berkshirerta.com/) | — | — | — | — | [berkshire-ma-us.zip](https://data.trilliumtransit.com/gtfs/berkshire-ma-us/berkshire-ma-us.zip) | Static GTFS only - live platform noted: RouteMatch |
 | May 28, 2026 | Archiving Started | [CATA](https://www.canntran.com/) | — | — | — | — | [capeann-ma-us.zip](https://data.trilliumtransit.com/gtfs/capeann-ma-us/capeann-ma-us.zip) | Static GTFS only |
 | May 28, 2026 | Archiving Started | [CCRTA](https://www.capecodrta.org/) | — | — | — | — | [capecod-ma-us.zip](https://data.trilliumtransit.com/gtfs/capecod-ma-us/capecod-ma-us.zip) | Static GTFS only |
-| May 28, 2026 | Archiving Started | [FRTA](https://www.frta.org/) | — | — | — | — | [frta-ma-us.zip](https://data.trilliumtransit.com/gtfs/frta-ma-us/frta-ma-us.zip) | Static GTFS only |
+| May 28, 2026 | Archiving Started | [FRTA](https://www.frta.org/) | — | — | — | — | [frta-ma-us.zip](https://data.trilliumtransit.com/gtfs/frta-ma-us/frta-ma-us.zip) | Static GTFS only - live platform noted: PassioGo |
+| June 06, 2026 | Archiving Archiving Started | [GATRA](https://www.gatra.org/) | — | — | — | — | [gatra-ma-us.zip](http://data.trilliumtransit.com/gtfs/gatra-ma-us/gatra-ma-us.zip) | Static GTFS only - see note below |
+| May 28, 2026 | Archiving Started | [Massport](https://www.massport.com/) | — | — | — | — | [massport-ma-us.zip](https://data.trilliumtransit.com/gtfs/massport-ma-us/massport-ma-us.zip) | Static GTFS only - live platform n oted: Custom  |
 | May 28, 2026 | Archiving Started | [LRTA](https://www.lrta.com/) | — | — | — | — | [lowell-ma-us.zip](https://data.trilliumtransit.com/gtfs/lowell-ma-us/lowell-ma-us.zip) | Static GTFS only |
-| May 28, 2026 | Archiving Started | [MART](https://www.mrta.us/) | — | — | — | — | [montachusett-ma-us.zip](https://data.trilliumtransit.com/gtfs/montachusett-ma-us/montachusett-ma-us.zip) | Static GTFS only |
-| May 28, 2026 | Archiving Started | [Massport](https://www.massport.com/) | — | — | — | — | [massport-ma-us.zip](https://data.trilliumtransit.com/gtfs/massport-ma-us/massport-ma-us.zip) | Static GTFS only |
+| May 28, 2026 | Archiving Started | [MART](https://www.mrta.us/) | — | — | — | — | [montachusett-ma-us.zip](https://data.trilliumtransit.com/gtfs/montachusett-ma-us/montachusett-ma-us.zip) | Static GTFS only - live platform noted: PassioGo |
 | May 28, 2026 | Archiving Started | [MeVa](https://www.mvrta.com/) | — | — | — | — | [merrimackvalley-ma-us.zip](https://data.trilliumtransit.com/gtfs/merrimackvalley-ma-us/merrimackvalley-ma-us.zip) | Static GTFS only |
 | May 28, 2026 | Archiving Started | [MWRTA](https://www.mwrta.com/) | — | — | — | — | [google_transit.zip](http://vc.mwrta.com/gtfs/google_transit.zip) | Static GTFS only |
 | May 28, 2026 | Archiving Started | [NRTA](https://www.nrtawave.com/) | — | — | — | — | [GTFSDownload.aspx](https://nrtawave.transloc.com/Secure/Admin/Reports/GTFSDownload.aspx) | Static GTFS only |
 | May 28, 2026 | Archiving Started | [PVTA](https://www.pvta.com/) | — | — | — | — | [google_transit.zip](http://www.pvta.com/g_trans/google_transit.zip) | Static GTFS only |
-| May 28, 2026 | Archiving Started | [SRTA](https://www.srtabus.com/) | TBD | TBD | TBD | TBD | TBD | TBD |
+| May 28, 2026 | Archiving Started | [SRTA](https://www.srtabus.com/) | — | — | — | — | [srta-ma-us.zip](https://data.trilliumtransit.com/gtfs/srta-ma-us/srta-ma-us.zip) | Static GTFS only - live platform noted: Clever Devices BusTime |
 | May 28, 2026 | Archiving Started | [VTA](https://www.vineyardtransit.com/) | — | — | — | — | [marthasvineyard-ma-us.zip](https://data.trilliumtransit.com/gtfs/marthasvineyard-ma-us/marthasvineyard-ma-us.zip) | Static GTFS only |
-| May 28, 2026 | Archiving Started | [WRTA](https://therta.com/) | — | — | — | — | [wrta-ma-us.zip](https://data.trilliumtransit.com/gtfs/wrta-ma-us/wrta-ma-us.zip) | Static GTFS only - for now, intresting in seeing how their [Bus Tracker](https://swiv.wrta.cadavl.com/SWIV/WRTA) gets its data. |
+| May 28, 2026 | Archiving Started | [WRTA](https://therta.com/) | — | — | — | — | [wrta-ma-us.zip](https://data.trilliumtransit.com/gtfs/wrta-ma-us/wrta-ma-us.zip) | Static GTFS only - for now, interested in seeing how their [Bus Tracker](https://swiv.wrta.cadavl.com/SWIV/WRTA) gets its data. |
 | May 28, 2026 | Archiving Started | [Yankee Line](https://yankeeline.us/) | — | — | — | — | [yankeeline-ma-us.zip](https://data.trilliumtransit.com/gtfs/yankeeline-ma-us/yankeeline-ma-us.zip) | Static GTFS only |
 
-_**Note:** [GATRA](https://www.gatra.org/) is excluded from this dataset because, as of May 28, 2026, their [Static GTFS Feed](https://data.trilliumtransit.com/gtfs/gatra-ma-us/gatra-ma-us.zip) seems to have been last updated in March 2025. However, they use the same platform as [WRTA](https://therta.com/) for their [Bus Tracker](https://swiv.gatra.cadavl.com/SWIV/GATRA), so that might be a future area of exploration.__
+_**Note:** [GATRA](https://www.gatra.org/) static GTFS is included and currently still pulled. However, as of June 6, 2026, their [Static GTFS Feed](http://data.trilliumtransit.com/gtfs/gatra-ma-us/) appears to show a most recent update date of March 21, 2025, so accuracy, currency, and freshness are not guaranteed (you don't get money back either way sorry)._
+_**Additional Note:** 100% uptime is **NOT** guaranteed. Sometimes things crash or break or power goes out, but eventually I'll try to add a table indicating down-time for any of the live streams, or dates missed for the static ones - TBD though._
 
-## Docker Compose Files
+## Static GTFS Script
 
-A Docker Compose file for all Static GTFS Feeds for the MBTA, 13 of the 14 Massachusetts Regional transit Agencies agencies (excluding [GATRA](https://www.gatra.org/), for reasons above), Yankee Line, and Massport is available in this repo as [`compose-ma-rtas.yaml`](https://github.com/mxdrew/gtfs-data-archiver/blob/main/compose-ma-rtas.yaml). 
+Static GTFS pulls for the MBTA, all 14 Massachusetts regional transit agencies, Yankee Line, and Massport are handled by [otherScripts/ma_gtfs_archiver.py](https://github.com/mxdrew/gtfs-data-archiver/blob/main/otherScripts/ma_gtfs_archiver.py), with optionally enabled MBTA live stream ingestion.
 
 ---
 
 ## Directory Structure
 ```
 data/
-├── events/   (Active daily JSONL files)
-└── archive/  (Compacted Parquet files + Static GTFS Parquet files)
-    └── gtfs/ (Static GTFS Parquet files)
+├── events/    (Active daily JSONL files)
+└── archive/   (Compacted Parquet files + static GTFS + merged historical outputs)
+    ├── gtfs/  (Static GTFS Parquet files)
+    └── combinedEvents/  (Merged historical parquet outputs)
 ```
 
 ## 1. `data/events/` (Active Write-Ahead Logs)
@@ -45,8 +48,8 @@ data/
 **Schema:**
 | Column | Type | Notes | Example |
 |:------:|:----:|:------:|:--------:|
-| `hash_id` | `str` | SHA-256 fingerprint. | `c5fdc9...` |
-| `ts` | `TIMESTAMP` | [ISO 8601 timestamp](https://en.wikipedia.org/wiki/ISO_8601#Combined_date_and_time_representations), timezone-aware via `SYNC_TIMEZONE`. | `2026-05-25T...` |
+| `hash_id` | `str` | SHA-256 fingerprint. | `23ecefdb28d8cb18ed98c6932ffc5b093c35890b5376e7d0ccf72dc19372c00d` |
+| `ts` | `TIMESTAMP` | [ISO 8601 timestamp](https://en.wikipedia.org/wiki/ISO_8601#Combined_date_and_time_representations), timezone-aware via `SYNC_TIMEZONE`. | `2026-05-28T00:00:00-04:00` |
 | `event` | `str` | Type of event: add, update, remove, reset, snapshot, error. | `update` |
 | `id` | `str` | API entity ID. | `prediction-123` |
 | `data` | `str` | Raw JSON payload. | `{"attributes": {...}}` |
@@ -108,8 +111,8 @@ data/
 **Schema:**
 | Column | Parquet Type | Notes | Example |
 |:------:|:------------:|:------:|:--------:|
-| `hash_id` | `BINARY` | SHA-256 deduplication fingerprint. | `c5fdc9...` |
-| `ts` | `TIMESTAMP` | [ISO 8601 timestamp](https://en.wikipedia.org/wiki/ISO_8601#Combined_date_and_time_representations), timezone-aware via `SYNC_TIMEZONE`. | `2026-05-25T...` |
+| `hash_id` | `BINARY` | SHA-256 deduplication fingerprint. | `23ecefdb28d8cb18ed98c6932ffc5b093c35890b5376e7d0ccf72dc19372c00d` |
+| `ts` | `TIMESTAMP` | [ISO 8601 timestamp](https://en.wikipedia.org/wiki/ISO_8601#Combined_date_and_time_representations), timezone-aware via `SYNC_TIMEZONE`. | `2026-05-28T00:00:00-04:00` |
 | `event` | `STRING` | Type of event: add, update, remove, reset, snapshot, error. | `update` |
 | `id` | `STRING` | API entity ID. | `prediction-123` |
 | `data` | `STRING` | Stringified JSON payload. | `{"attributes": {...}}` |
@@ -154,7 +157,7 @@ data/
 **Freshness Guarantee:**
 - Updated twice daily (03:00 and 15:00 local time).
 - Each run merges into the existing table file, deduplicates identical rows by `hash_id`, and updates `last_logged` for rows that reappear.
-- This is not a money-back guarantee as there is no money involved - its more of a pinky promise at best.
+- This is not a money-back guarantee as there is no money involved - it's more of a pinky promise at best.
 
 **Generated Files:**
 - `AGENCY_NAME_gtfs_agency.parquet`
@@ -190,6 +193,22 @@ data/
 - `AGENCY_NAME_gtfs_trips_properties.parquet`
 - `AGENCY_NAME_gtfs_trips_properties_definitions.parquet`
 
+---
+
+## 4. `data/archive/combinedEvents/` (Merged Historical Outputs)
+
+**Purpose:** Long-running merged histories for agency/stream datasets and `otherScripts` pipelines.
+
+**Behavior:**
+- Combined outputs are maintained separately from active event logs.
+- Many combined files include sidecar `*.manifest.json` files that track merge state and metadata.
+- Combined files are intended for historical analysis and continuity across ingest cycles.
+
+**Generated Files:**
+- `AGENCY_stream_combined.parquet`
+
+---
+
 ## Note
 
 File naming and similar functions are driven by the compose configuration:
@@ -197,3 +216,4 @@ File naming and similar functions are driven by the compose configuration:
 - `AGENCY_NAME` sets the filename prefix.
 - The enable flags control which file families are produced.
 - Static GTFS files are cumulative per table and use a stable `.parquet` name instead of a date suffix.
+
