@@ -10,7 +10,7 @@
 | May 28, 2026 | Archiving Started | [CATA](https://www.canntran.com/) | — | — | — | — | [capeann-ma-us.zip](https://data.trilliumtransit.com/gtfs/capeann-ma-us/capeann-ma-us.zip) | Static GTFS only |
 | May 28, 2026 | Archiving Started | [CCRTA](https://www.capecodrta.org/) | — | — | — | — | [capecod-ma-us.zip](https://data.trilliumtransit.com/gtfs/capecod-ma-us/capecod-ma-us.zip) | Static GTFS only |
 | May 28, 2026 | Archiving Started | [FRTA](https://www.frta.org/) | — | — | — | — | [frta-ma-us.zip](https://data.trilliumtransit.com/gtfs/frta-ma-us/frta-ma-us.zip) | Static GTFS only - live platform noted: PassioGo |
-| June 06, 2026 | Archiving Archiving Started | [GATRA](https://www.gatra.org/) | — | — | — | — | [gatra-ma-us.zip](http://data.trilliumtransit.com/gtfs/gatra-ma-us/gatra-ma-us.zip) | Static GTFS only - see note below |
+| June 06, 2026 | Archiving Started | [GATRA](https://www.gatra.org/) | — | — | — | — | [gatra-ma-us.zip](http://data.trilliumtransit.com/gtfs/gatra-ma-us/gatra-ma-us.zip) | Static GTFS only - see note below |
 | May 28, 2026 | Archiving Started | [Massport](https://www.massport.com/) | — | — | — | — | [massport-ma-us.zip](https://data.trilliumtransit.com/gtfs/massport-ma-us/massport-ma-us.zip) | Static GTFS only - live platform n oted: Custom  |
 | May 28, 2026 | Archiving Started | [LRTA](https://www.lrta.com/) | — | — | — | — | [lowell-ma-us.zip](https://data.trilliumtransit.com/gtfs/lowell-ma-us/lowell-ma-us.zip) | Static GTFS only |
 | May 28, 2026 | Archiving Started | [MART](https://www.mrta.us/) | — | — | — | — | [montachusett-ma-us.zip](https://data.trilliumtransit.com/gtfs/montachusett-ma-us/montachusett-ma-us.zip) | Static GTFS only - live platform noted: PassioGo |
