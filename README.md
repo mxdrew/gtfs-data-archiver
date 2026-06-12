@@ -92,22 +92,20 @@ This project aims to adhere to the [MassDOT Developers License Agreement](https:
 
 All schema definitions are intentionally centralized in [**DATA.md**](https://github.com/mxdrew/gtfs-data-archiver/blob/main/DATA.md) to avoid duplication and drift.
 
-Event archives use the `AGENCY_NAME_<source>_<MMDDYYYY>` prefix so logs from different agencies stay isolated and easy to scan. Static GTFS uses stable per-table files named `AGENCY_NAME_gtfs_<table>.parquet`, with `first_logged` and `last_logged` metadata tracking the exact timestamp when each unique row was first and most recently seen.
+Static GTFS uses stable per-table files named `AGENCY_NAME_gtfs_<table>.parquet`, with `first_logged` and `last_logged` metadata tracking the exact timestamp when each unique row was first and most recently seen.
 
 See:
 - `data/events/` → [DATA.md](https://github.com/mxdrew/gtfs-data-archiver/blob/main/DATA.md#1-dataevents-active-write-ahead-logs) (Active ingestion schema)
 - `data/archive/` → [DATA.md](https://github.com/mxdrew/gtfs-data-archiver/blob/main/DATA.md#2-dataarchive-compacted-event-logs) (Compacted analytical schema)
 - `data/archive/gtfs/` → [DATA.md](https://github.com/mxdrew/gtfs-data-archiver/blob/main/DATA.md#3-dataarchivegtfs-static-schedule-data) (Static GTFS schema)
-- `data/archive/combinedEvents/` → [DATA.md](https://github.com/mxdrew/gtfs-data-archiver/blob/main/DATA.md#4-dataarchivecombinedevents-merged-historical-outputs) (Merged historical outputs)
 
 ## Directory Structure
 
 ```
     data/
   ├── events/    (Active daily JSONL files)
-  └── archive/   (Compacted Parquet files + static GTFS + merged historical outputs)
-    ├── gtfs/  (Static GTFS Parquet files)
-    └── combinedEvents/  (Merged historical parquet outputs)
+  └── archive/   (Compacted Parquet files + static GTFS outputs)
+    └── gtfs/  (Static GTFS Parquet files)
 ```
 
 ## Key Guarantees
@@ -308,6 +306,8 @@ _**DISCLAIMER**: <u>These should be used at your own discretion and risk</u>. Th
 - `otherScripts/massport.py`: Massport and Logan Express polling workflow.
 - `otherScripts/passigo.py`: PassioGo ingestion for configured agency IDs.
 - `otherScripts/routematch.py`: RouteMatch ingestion for configured agency/feed endpoints.
+- `otherScripts/gtfsrt.py`: GTFS-RT protobuf ingestion for configured agencies (PVTA, MVRTA). Polls VehiclePosition, TripUpdate, and Alert feeds.
+- `otherScripts/swiv.py`: SWIV CAD AVL ingestion for configured agencies (GATRA, WRTA, LRTA). Crawls SystemConfig, TopoBase, Vehicles, Alerts, and TopoRefresh streams.
 - `otherScripts/ma_gtfs_archiver.py`: multi-agency runner for static GTFS pulls (MBTA, 14 Massachusetts Regional Transit Agencies, Yankee Line, and Massport) with optional MBTA live ingestion.
 
 Everything in `otherScripts` reads environment-based configuration and writes outputs under the configured data directory.
@@ -332,6 +332,12 @@ The root `.env` includes variables for scripts tracked in git (non-ignored scrip
 
 - `otherScripts/massport.py`:
 uses fixed in-script agency and polling values; only shared runtime variables apply (`SYNC_TIMEZONE`, `ARCHIVE_ZSTD_LEVEL`, `DATA_DIR`, `DATA_DIR_WSL`).
+
+- `otherScripts/gtfsrt.py`:
+`GTFSRT_TARGET_AGENCIES` (optional; comma-separated list of agencies to enable, defaults to all), plus shared runtime variables `SYNC_TIMEZONE`, `ARCHIVE_ZSTD_LEVEL`, `POLL_INTERVAL_FAST`, `POLL_INTERVAL_MEDIUM`, `POLL_INTERVAL_SLOW`, `DATA_DIR`, `DATA_DIR_WSL`. Requires `gtfs-realtime-bindings` (`pip install gtfs-realtime-bindings`).
+
+- `otherScripts/swiv.py`:
+`SWIV_TARGET_AGENCIES` (optional; comma-separated list of agencies to enable, defaults to all), plus shared runtime variables `SYNC_TIMEZONE`, `ARCHIVE_ZSTD_LEVEL`, `POLL_INTERVAL_CRAWLER`, `DATA_DIR`, `DATA_DIR_WSL`.
 
 ## Installation
 

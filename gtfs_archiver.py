@@ -2,7 +2,7 @@
 # Author Information:
 # Drew Mulcare
 # github@mxdrew.com
-# May 25, 2026 (Last updated May 27, 2026)
+# May 25, 2026 (Last updated June 11, 2026)
 #
 # Description:
 # Lightweight, single-process data ingestion engine for real-time and static transit feeds. 
@@ -20,8 +20,9 @@
 # If a Parquet archive already exists for a given day (due to container restarts), the worker 
 # merges the JSONL data into the existing Parquet file and deduplicates records using a SHA-256 hash.
 # Static GTFS snapshots are merged into stable per-table Parquet files under data/archive/gtfs/.
-# Identical rows are stored once using SHA-256 deduplication, with `first_logged` and 
-# `last_logged` metadata preserving when each unique record first appeared and was most recently seen.
+# Identical rows are stored once using SHA-256 deduplication; `first_logged` and `last_logged`
+# metadata columns are added exclusively to static GTFS tables to track when each unique record
+# first appeared and was most recently seen. Live event records do not carry these columns.
 #
 # Startup routines include an orphaned JSONL recovery sweep and automated scheduling for 
 # twice-daily GTFS static package downloads (03:00 and 15:00 local time) routed to data/archive/gtfs/.
@@ -88,7 +89,7 @@ def env_float(name, default):
         return default
 
 
-LOCAL_TZ = ZoneInfo(env_text("SYNC_TIMEZONE", "America/New_York") or "America/New_York")
+LOCAL_TZ = ZoneInfo(env_text("SYNC_TIMEZONE"))
 API_KEY = env_text("API_KEY")
 BASE_URL = env_text("BASE_URL")
 GTFS_URL = env_text("GTFS_URL")
@@ -131,7 +132,8 @@ ENABLE_GTFS_STATIC = env_flag("ENABLE_GTFS_STATIC", "true")
 
 GTFS_DOWNLOAD_HEADERS = {
     "Accept": "application/zip,application/octet-stream,*/*",
-    "User-Agent": "gtfs-data-archiver/1.0 (+https://github.com/mxdrew/gtfs-data-archiver)",
+    # Keep user-agent configurable from .env without adding extra module globals.
+    "User-Agent": env_text("GTFS_DOWNLOAD_USER_AGENT"),
 }
 
 # 1. Base Streams
@@ -170,6 +172,7 @@ def get_http_session():
 
     if _http_session is None:
         session = requests.Session()
+        # Keep retries tight and idempotent (GET only) to avoid duplicate side effects.
         retry = Retry(
             total=3,
             connect=3,
@@ -324,25 +327,21 @@ def writer_worker():
     log("Writer thread engaged. Streaming to JSONL.")
     handles = {}
     
-    # Capture the current date once for the `first_logged` field.
-    first_logged_date = datetime.now(LOCAL_TZ).strftime("%Y-%m-%d")
-    
     try:
         while not stop_event.is_set() or not write_queue.empty():
             try:
                 current_date_key = datetime.now(LOCAL_TZ).strftime("%m%d%Y")
+                # Close old file handles immediately after date rollover.
                 close_stale_event_handles(handles, current_date_key)
 
                 endpoint, evt_type, record_data = write_queue.get(timeout=1.0)
                 
-                # Deterministic hash excludes timestamp and log date so deduplication works across days.
+                # Deterministic hash excludes timestamp so deduplication works across days.
                 payload_str = f"{endpoint}|{evt_type}|{record_data.get('id', '')}|{json.dumps(record_data, sort_keys=True)}"
                 hash_id = hashlib.sha256(payload_str.encode("utf-8")).hexdigest()
                 
-                # Format the record to schema with historical tracking.
                 record = {
                     "hash_id": hash_id,
-                    "first_logged": first_logged_date,  # This date is stable for the life of the record.
                     "ts": datetime.now(LOCAL_TZ).isoformat(),
                     "event": evt_type,
                     "id": str(record_data.get("id", "")),
@@ -353,6 +352,7 @@ def writer_worker():
                 filepath = EVENTS_DIR / filename
                 
                 if filename not in handles:
+                    # Open once per day/file and reuse handle for lower IO overhead.
                     handles[filename] = open(filepath, "a", encoding="utf-8")
                 
                 handles[filename].write(json.dumps(record) + "\n")
@@ -417,6 +417,7 @@ def parquet_compaction_worker():
 
                         writer.close()
                         writer = None
+                        # Atomic replacement avoids partial archives on interruption.
                         temp_path.replace(parquet_path)
                         file.unlink()
                         log(f"Success: {file.name} compacted into {parquet_path.name} with {row_count} rows.")
@@ -490,6 +491,7 @@ def sse_consumer(endpoint, params=None):
             for line in response.iter_lines(decode_unicode=True):
                 if stop_event.is_set(): break
                 if not line:
+                    # Blank line marks one complete SSE event payload.
                     if data_buffer:
                         payload = json.loads("\n".join(data_buffer))
                         records = payload if isinstance(payload, list) else [payload]

@@ -16,4 +16,4 @@ __pycache__/
 docker-compose-*.yaml
 
 otherScripts/*.env
-otherScripts/*_dmm.py
+otherScripts/*_dmm.*

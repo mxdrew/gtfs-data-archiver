@@ -2,7 +2,7 @@
 # Author Information:
 # Drew Mulcare
 # github@mxdrew.com
-# May 25, 2026 (Last updated June 6, 2026)
+# May 25, 2026 (Last updated June 11, 2026)
 #
 # Description:
 # Multi-agency runner for static GTFS and optional MBTA live ingestion.
@@ -19,8 +19,9 @@
 # If a Parquet archive already exists for a given day (due to container restarts), the worker 
 # merges the JSONL data into the existing Parquet file and deduplicates records using a SHA-256 hash.
 # Static GTFS snapshots are merged into stable per-table Parquet files under data/archive/gtfs/.
-# Identical rows are stored once using SHA-256 deduplication, with `first_logged` and 
-# `last_logged` metadata preserving when each unique record first appeared and was most recently seen.
+# Identical rows are stored once using SHA-256 deduplication; `first_logged` and `last_logged`
+# metadata columns are added exclusively to static GTFS tables to track when each unique record
+# first appeared and was most recently seen. Live event records do not carry these columns.
 #
 # Startup routines include an orphaned JSONL recovery sweep and automated scheduling for 
 # twice-daily GTFS static package downloads (03:00 and 15:00 local time) routed to data/archive/gtfs/.
@@ -161,8 +162,12 @@ AGENCIES = [
     {"name": "PVTA", "prefix": "PVTA", "gtfs_url": "http://www.pvta.com/g_trans/google_transit.zip", "enable_gtfs_static": True},
     {"name": "VTA", "prefix": "VTA", "gtfs_url": "https://data.trilliumtransit.com/gtfs/marthasvineyard-ma-us/marthasvineyard-ma-us.zip", "enable_gtfs_static": True},
     {"name": "WRTA", "prefix": "WRTA", "gtfs_url": "https://data.trilliumtransit.com/gtfs/wrta-ma-us/wrta-ma-us.zip", "enable_gtfs_static": True},
+    {"name": "SRTA", "prefix": "SRTA", "gtfs_url": "https://data.trilliumtransit.com/gtfs/srta-ma-us/srta-ma-us.zip", "enable_gtfs_static": True},
     {"name": "YANKEE", "prefix": "YANKEE", "gtfs_url": "https://data.trilliumtransit.com/gtfs/yankeeline-ma-us/yankeeline-ma-us.zip", "enable_gtfs_static": True},
-    {"name": "MASSPORT", "prefix": "MASSPORT", "gtfs_url": "https://data.trilliumtransit.com/gtfs/massport-ma-us/massport-ma-us.zip", "enable_gtfs_static": True}
+    {"name": "MASSPORT", "prefix": "MASSPORT", "gtfs_url": "https://data.trilliumtransit.com/gtfs/massport-ma-us/massport-ma-us.zip", "enable_gtfs_static": True},
+    {"name": "LEXPRESS", "prefix": "LEXPRESS", "gtfs_url": "http://rtaalerts.com/gtfs/lexpress/google_transit.zip", "enable_gtfs_static": True},
+    {"name": "SSA", "prefix": "SSA", "gtfs_url": "https://www-steamship-assets.s3.amazonaws.com/versioned_downloadable_forms/path/2025_gtfs_copy1.zip", "enable_gtfs_static": True},
+    {"name": "HYLINE", "prefix": "HYLINE", "gtfs_url": "https://data.trilliumtransit.com/gtfs/hylinecruises-ma-us/hylinecruises-ma-us.zip", "enable_gtfs_static": True}
 ]
 
 
@@ -322,8 +327,6 @@ def writer_worker():
     log("Unified Writer thread engaged. Streaming to JSONL.")
     handles = {}
     
-    first_logged_date = datetime.now(LOCAL_TZ).strftime("%Y-%m-%d")
-    
     try:
         while not stop_event.is_set() or not write_queue.empty():
             try:
@@ -332,12 +335,12 @@ def writer_worker():
 
                 agency_prefix, endpoint, evt_type, record_data = write_queue.get(timeout=1.0)
                 
+                # Deterministic hash excludes timestamp so deduplication works across days.
                 payload_str = f"{agency_prefix}|{endpoint}|{evt_type}|{record_data.get('id', '')}|{json.dumps(record_data, sort_keys=True)}"
                 hash_id = hashlib.sha256(payload_str.encode("utf-8")).hexdigest()
                 
                 record = {
                     "hash_id": hash_id,
-                    "first_logged": first_logged_date,
                     "ts": datetime.now(LOCAL_TZ).isoformat(),
                     "event": evt_type,
                     "id": str(record_data.get("id", "")),

@@ -2,7 +2,7 @@
 # Author Information:
 # Drew Mulcare
 # github@mxdrew.com
-# May 28, 2026 (Last updated June 6, 2026)
+# May 28, 2026 (Last updated June 11, 2026)
 #
 # Description:
 # Dedicated ingestion engine for RouteMatch Transit Systems.
@@ -331,8 +331,6 @@ def log(message, level="info", agency=ROUTEMATCH_AGENCY):
             err_record = {
                 "hash_id": hashlib.sha256(f"{agency}|error|{ts_full}|{message}".encode("utf-8")).hexdigest(),
                 "ts": ts_full,
-                "first_logged": ts_full,
-                "last_logged": ts_full,
                 "agency": agency,
                 "stream": "Errors",
                 "event": "error",
@@ -409,7 +407,7 @@ def load_history_metadata(file_path):
         for line in handle:
             try:
                 entry = json.loads(line)
-                hashes[entry["hash_id"]] = entry.get("first_logged", entry.get("ts"))
+                hashes[entry["hash_id"]] = True
             except Exception:
                 continue
     return hashes
@@ -477,14 +475,11 @@ def emit_record(stream, event, data, endpoint="", metadata=None):
         history = seen_hashes.setdefault(stream_key, {})
         if hash_id in history:
             return False
-        first_logged = history.get(hash_id, now_ts)
-        history[hash_id] = first_logged
+        history[hash_id] = True
 
     record = {
         "hash_id": hash_id,
         "ts": now_ts,
-        "first_logged": first_logged,
-        "last_logged": now_ts,
         "agency": ROUTEMATCH_AGENCY,
         "stream": stream,
         "event": event,
@@ -567,7 +562,7 @@ def init_ui_state(load_history=True):
                     )
                     state["total_today"] += 1
 
-                    ts_value = entry.get("ts") or entry.get("first_logged")
+                    ts_value = entry.get("ts")
                     if ts_value:
                         try:
                             state["last_sync_time"] = ts_value[11:19]
