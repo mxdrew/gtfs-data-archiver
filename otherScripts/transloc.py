@@ -2,13 +2,13 @@
 # Author Information:
 # Drew Mulcare
 # github@mxdrew.com
-# June 11, 2026
+# June 30, 2026
 #
 # Description:
-# Dedicated ingestion engine for SWIV CAD AVL agencies.
-# Crawls SystemConfig, TopoBase (hourly) and Vehicles, Alerts, TopoRefresh
-# (poll-loop) for configured agencies (GATRA, WRTA, LRTA) via the Avail/CADAVL
-# SWIV REST proxy and writes records to the Data Lake.
+# Dedicated ingestion engine for TransLoc/RideSystems CAD AVL agencies.
+# Crawls Routes+Stops (hourly) and Vehicles, StopArrivalTimes, VehicleCapacities
+# (poll-loop) for configured agencies (NRTA) via the TransLoc JSON relay API
+# and writes records to the Data Lake.
 #
 # Data Integrity & Storage:
 # Implements append-only JSONL event capture with deterministic deduplication hashes.
@@ -17,8 +17,8 @@
 # Output Schema:
 #   hash_id — SHA-256 deterministic deduplication fingerprint
 #   ts      — ISO 8601 timestamp in the configured timezone
-#   agency  — agency label such as GATRA, WRTA, or LRTA
-#   stream  — logical stream name (SystemConfig, TopoBase, Vehicles, Alerts, TopoRefresh)
+#   agency  — agency label such as NRTA
+#   stream  — logical stream name (Routes, Vehicles, StopArrivalTimes, VehicleCapacities)
 #   event   — update | snapshot | error
 #   data    — full API payload (JSON string in Parquet, raw dict in JSONL)
 
@@ -26,6 +26,7 @@ import json
 import hashlib
 import os
 import random
+import re
 import tempfile
 import threading
 import time
@@ -126,16 +127,13 @@ def default_data_dir():
     return Path(env_required("DATA_DIR"))
 
 
-# All agencies that run on the SWIV CAD AVL platform. The SWIV proxy URL pattern is:
-# https://swiv.{agency_lower}.cadavl.com/SWIV/{AGENCY}/proxy/restWS
-SWIV_AGENCIES = ("GATRA", "WRTA", "LRTA")
-
-# Derive target agencies from .env; fall back to running all configured ones.
-_target_env = env_list("SWIV_TARGET_AGENCIES")
-TARGET_AGENCIES = tuple(a for a in SWIV_AGENCIES if not _target_env or a in _target_env)
-SUPPORTED_AGENCIES = TARGET_AGENCIES
-
-AGENCY_FEEDS = ("SystemConfig", "TopoBase", "Vehicles", "Alerts", "TopoRefresh")
+# TransLoc/RideSystems base URL and credentials.
+TRANSLOC_BASE_URL = env_text(
+    "TRANSLOC_BASE_URL",
+    "https://nrtawave.transloc.com/Services/JSONPRelay.svc",
+).rstrip("/")
+TRANSLOC_API_KEY = env_text("TRANSLOC_API_KEY", "8882812681")
+TRANSLOC_AGENCY = env_text("TRANSLOC_AGENCY", "NRTA")
 
 ARGS = SimpleNamespace(
     no_compaction=False,
@@ -147,16 +145,20 @@ DATA_DIR = default_data_dir()
 EVENTS_DIR = DATA_DIR / "events"
 ARCHIVE_DIR = DATA_DIR / "archive"
 LOG_DIR = DATA_DIR / "logs"
-LOG_FILE = LOG_DIR / "swiv_ingest.log"
+LOG_FILE = LOG_DIR / "transloc_ingest.log"
 
 for _dir in [EVENTS_DIR, ARCHIVE_DIR, LOG_DIR]:
     _dir.mkdir(parents=True, exist_ok=True)
 
 ARCHIVE_ZSTD_LEVEL = env_int("ARCHIVE_ZSTD_LEVEL", 10)
-POLL_INTERVAL_CRAWLER = env_int("POLL_INTERVAL_CRAWLER", 10)
+POLL_INTERVAL_FAST = env_int("POLL_INTERVAL_FAST", 10)    # Vehicles
+POLL_INTERVAL_MEDIUM = env_int("POLL_INTERVAL_MEDIUM", 15) # StopArrivalTimes
+POLL_INTERVAL_SLOW = env_int("POLL_INTERVAL_SLOW", 30)    # VehicleCapacities
 
-# Hourly refresh flags — allows the TUI to force a manual hourly pull.
-HOURLY_REFRESH_FLAGS = {agency: threading.Event() for agency in SWIV_AGENCIES}
+AGENCY_FEEDS = ("Routes", "Vehicles", "StopArrivalTimes", "VehicleCapacities")
+
+# Force hourly refresh flags — set via TUI keypress.
+HOURLY_REFRESH_FLAG = threading.Event()
 
 write_queue = Queue(maxsize=50000)
 stop_event = threading.Event()
@@ -257,10 +259,20 @@ def normalize_jsonable(value):
     return str(value)
 
 
-def request_json(url, timeout=10, agency=""):
+def parse_transloc_date(value):
+    """Convert a /Date(ms)/ timestamp to an ISO string, or return as-is."""
+    if isinstance(value, str):
+        match = re.match(r"/Date\((\d+)\)/", value)
+        if match:
+            ms = int(match.group(1))
+            return datetime.fromtimestamp(ms / 1000, tz=LOCAL_TZ).isoformat(timespec="seconds")
+    return value
+
+
+def request_json(url, params=None, timeout=15, agency=""):
     try:
         session = get_http_session()
-        response = session.get(url, timeout=timeout)
+        response = session.get(url, params=params, timeout=timeout)
         if response.status_code != 200:
             log(f"HTTP {response.status_code} for {url}", level="warning", agency=agency)
             return None
@@ -364,16 +376,15 @@ def emit_record(agency, stream, event, data, endpoint=""):
 
 
 def infer_stream_type(stream):
-    """Label a stream as vehicle, alert, config, or topo for the TUI type column."""
     sl = stream.lower()
     if "vehicle" in sl:
         return "vehicle"
-    if "alert" in sl:
-        return "alert"
-    if "config" in sl or "version" in sl:
+    if "arrival" in sl or "stop" in sl:
+        return "prediction"
+    if "route" in sl:
         return "config"
-    if "topo" in sl:
-        return "topo"
+    if "capacit" in sl:
+        return "occupancy"
     return "general"
 
 
@@ -494,152 +505,259 @@ def compact_worker():
         sleep_with_stop(60)
 
 
-#### SWIV CRAWLER ####
+#### TRANSLOC CRAWLER ####
 
-class TransitCrawlerRunner:
-    """Polls a SWIV CAD AVL proxy for one agency.
+class TransLocCrawlerRunner:
+    """Polls a TransLoc/RideSystems API relay for one agency.
 
-    Hourly streams (SystemConfig, TopoBase) run once per hour and on startup.
-    Poll streams (Vehicles, Alerts, TopoRefresh) run continuously at POLL_INTERVAL_CRAWLER.
-    The poll loop gates on hourly_ready so static config is always available first.
+    Hourly streams (Routes) run once per hour and on startup.
+    Poll streams (Vehicles, StopArrivalTimes, VehicleCapacities) run continuously.
+    The poll loop gates on routes_ready so route IDs are available before predictions.
     """
 
-    def __init__(self, name):
-        self.name = name.upper()
-        self.base_url = f"https://swiv.{self.name.lower()}.cadavl.com/SWIV/{self.name}/proxy/restWS"
-        self.poll_interval = POLL_INTERVAL_CRAWLER
-
-        # Config + Version merged into SystemConfig (hourly).
-        self.hourly_streams = {
-            "SystemConfig": {"path": "/config", "key": None},
-            "TopoBase": {"path": "/topo", "key": "topo"},
-        }
-        self.poll_streams = {
-            "Vehicles": {"path": "/topo/vehicules", "key": "vehicule"},
-            "Alerts": {"path": "/iv/message", "key": None},
-            "TopoRefresh": {"path": "/topo/refresh", "key": "update"},
-        }
-        self.streams = {**self.hourly_streams, **self.poll_streams}
+    def __init__(self, agency, base_url, api_key):
+        self.agency = agency.upper()
+        self.base_url = base_url.rstrip("/")
+        self.api_key = api_key
         self.last_hourly = -1
-        self.hourly_ready = threading.Event()
+        self.routes_ready = threading.Event()
 
-    def extract_items(self, data, key):
+        # Cache of route IDs for per-route prediction fetches.
+        # Populated by the hourly Routes fetch.
+        self._route_ids = []
+        self._route_lock = threading.Lock()
+
+    # ── Helpers ──────────────────────────────────────────────────────────────
+
+    def _get(self, endpoint, params=None, timeout=15):
+        url = f"{self.base_url}/{endpoint.lstrip('/')}"
+        return request_json(url, params=params, timeout=timeout, agency=self.agency)
+
+    def _base_params(self):
+        return {"apiKey": self.api_key, "isPublicMap": "true"}
+
+    def _update_route_ids(self, routes):
+        """Extract and cache route IDs from a Routes payload."""
+        ids = []
+        if isinstance(routes, list):
+            for route in routes:
+                rid = route.get("RouteId") or route.get("routeId") or route.get("id")
+                if rid is not None:
+                    ids.append(str(rid))
+        with self._route_lock:
+            if ids:
+                self._route_ids = ids
+                log(f"Routes: cached {len(ids)} route IDs", agency=self.agency)
+
+    def _get_route_ids(self):
+        with self._route_lock:
+            return list(self._route_ids)
+
+    # ── Hourly: Routes ────────────────────────────────────────────────────────
+
+    def fetch_routes(self):
+        """GET GetRoutesForMapWithScheduleWithEncodedLine — full route + stop definitions."""
+        touch_ui_sync(self.agency, "Routes")
+        params = {"apiKey": self.api_key, "isDispatch": "false"}
+        data = self._get("GetRoutesForMapWithScheduleWithEncodedLine", params=params)
         if data is None:
-            return []
-        if key and isinstance(data, dict):
-            data = data.get(key, data)
-        if isinstance(data, list):
-            return data
-        return [data]
-
-    def fetch_and_emit(self, stream_name, config):
-        """Fetch one stream and emit records. SystemConfig merges /config and /config/version."""
-        if stream_name == "SystemConfig":
-            touch_ui_sync(self.name, "SystemConfig")
-            config_data = request_json(f"{self.base_url}/config", timeout=10, agency=self.name)
-            version_data = request_json(f"{self.base_url}/config/version", timeout=10, agency=self.name)
-            if config_data is None and version_data is None:
-                log("SystemConfig: both /config and /config/version failed", level="warning", agency=self.name)
-                return 0
-            merged = {
-                "config": config_data,
-                "version": version_data.get("version") if isinstance(version_data, dict) else version_data,
-            }
-            if emit_record(self.name, "SystemConfig", "snapshot", merged, endpoint="/config+/config/version"):
-                return 1
+            log("Routes: request failed", level="warning", agency=self.agency)
             return 0
 
-        url = f"{self.base_url}{config['path']}"
-        data = request_json(url, timeout=10, agency=self.name)
-        if data is None:
-            log(f"{stream_name}: request failed", level="warning", agency=self.name)
-            return 0
+        routes = data if isinstance(data, list) else (data.get("d") or data.get("routes") or [])
+        self._update_route_ids(routes)
 
-        touch_ui_sync(self.name, stream_name)
-        items = self.extract_items(data, config.get("key"))
         new_count = 0
-        for item in items:
-            if emit_record(self.name, stream_name, "update", item, endpoint=config["path"]):
+        for route in routes:
+            if emit_record(self.agency, "Routes", "snapshot", route, endpoint="GetRoutesForMapWithScheduleWithEncodedLine"):
                 new_count += 1
 
-        if new_count > 0:
-            log(f"{stream_name}: {new_count} records", level="info", agency=self.name)
-
         with UI_STATE_LOCK:
-            state = UI_STREAM_STATE.get((self.name, stream_name))
+            state = UI_STREAM_STATE.get((self.agency, "Routes"))
             if state:
                 state["new_this_poll"] = new_count
 
+        if new_count > 0:
+            log(f"Routes: {new_count} new records", agency=self.agency)
         return new_count
 
+    # ── Fast poll: Vehicles ───────────────────────────────────────────────────
+
+    def fetch_vehicles(self):
+        """GET GetMapVehiclePoints — live vehicle positions."""
+        touch_ui_sync(self.agency, "Vehicles")
+        data = self._get("GetMapVehiclePoints", params=self._base_params())
+        if data is None:
+            log("Vehicles: request failed", level="warning", agency=self.agency)
+            return 0
+
+        vehicles = data if isinstance(data, list) else (data.get("d") or data.get("vehicles") or [])
+        new_count = 0
+        for vehicle in vehicles:
+            if emit_record(self.agency, "Vehicles", "update", vehicle, endpoint="GetMapVehiclePoints"):
+                new_count += 1
+
+        with UI_STATE_LOCK:
+            state = UI_STREAM_STATE.get((self.agency, "Vehicles"))
+            if state:
+                state["new_this_poll"] = new_count
+
+        if new_count > 0:
+            log(f"Vehicles: {new_count} new records", agency=self.agency)
+        return new_count
+
+    # ── Medium poll: StopArrivalTimes (per route) ─────────────────────────────
+
+    def fetch_stop_arrival_times(self):
+        """GET GetStopArrivalTimes per route — real-time predictions."""
+        touch_ui_sync(self.agency, "StopArrivalTimes")
+        route_ids = self._get_route_ids()
+        if not route_ids:
+            log("StopArrivalTimes: no route IDs yet; skipping", level="verbose", agency=self.agency)
+            return 0
+
+        new_count = 0
+        for route_id in route_ids:
+            if stop_event.is_set():
+                break
+            params = {"routeIds": route_id, "version": "2"}
+            data = self._get("GetStopArrivalTimes", params=params, timeout=10)
+            if data is None:
+                continue
+
+            arrivals = data if isinstance(data, list) else (data.get("d") or data.get("arrivals") or [])
+            for arrival in arrivals:
+                # Attach route context so downstream consumers can join easily.
+                arrival_with_context = dict(arrival) if isinstance(arrival, dict) else {"raw": arrival}
+                arrival_with_context.setdefault("_routeId", route_id)
+                if emit_record(self.agency, "StopArrivalTimes", "update", arrival_with_context,
+                               endpoint=f"GetStopArrivalTimes?routeIds={route_id}"):
+                    new_count += 1
+
+            sleep_with_stop(0.1)  # gentle between routes
+
+        with UI_STATE_LOCK:
+            state = UI_STREAM_STATE.get((self.agency, "StopArrivalTimes"))
+            if state:
+                state["new_this_poll"] = new_count
+
+        if new_count > 0:
+            log(f"StopArrivalTimes: {new_count} new records across {len(route_ids)} routes", agency=self.agency)
+        return new_count
+
+    # ── Slow poll: VehicleCapacities ──────────────────────────────────────────
+
+    def fetch_vehicle_capacities(self):
+        """GET GetVehicleCapacities — occupancy data."""
+        touch_ui_sync(self.agency, "VehicleCapacities")
+        data = self._get("GetVehicleCapacities", params=self._base_params())
+        if data is None:
+            log("VehicleCapacities: request failed", level="warning", agency=self.agency)
+            return 0
+
+        capacities = data if isinstance(data, list) else (data.get("d") or data.get("capacities") or [])
+        new_count = 0
+        for cap in capacities:
+            if emit_record(self.agency, "VehicleCapacities", "update", cap, endpoint="GetVehicleCapacities"):
+                new_count += 1
+
+        with UI_STATE_LOCK:
+            state = UI_STREAM_STATE.get((self.agency, "VehicleCapacities"))
+            if state:
+                state["new_this_poll"] = new_count
+
+        if new_count > 0:
+            log(f"VehicleCapacities: {new_count} new records", agency=self.agency)
+        return new_count
+
+    # ── Loop orchestration ────────────────────────────────────────────────────
+
     def run_hourly(self):
-        """Execute one full cycle of hourly feeds. Safe to call from the refresh handler."""
-        for stream_name, config in self.hourly_streams.items():
-            self.fetch_and_emit(stream_name, config)
-        self.hourly_ready.set()
-
-    def poll_loop(self):
-        # Wait for hourly config to arrive before starting live polling.
-        self.hourly_ready.wait(timeout=15)
-        while not stop_event.is_set():
-            start_time = time.time()
-            try:
-                for stream_name, config in self.poll_streams.items():
-                    if stop_event.is_set():
-                        break
-                    self.fetch_and_emit(stream_name, config)
-                    sleep_with_stop(0.05 + random.random() * ARGS.poll_jitter)
-            except Exception as exc:
-                log(f"SWIV Poll Error: {exc}", level="error", agency=self.name)
-
-            elapsed = time.time() - start_time
-            sleep_with_stop(max(0, self.poll_interval - elapsed) + random.random() * ARGS.poll_jitter)
+        """Execute one full cycle of hourly feeds."""
+        self.fetch_routes()
+        self.routes_ready.set()
 
     def hourly_loop(self):
         while not stop_event.is_set():
             now = datetime.now(LOCAL_TZ)
-            force = HOURLY_REFRESH_FLAGS.get(self.name, threading.Event()).is_set()
+            force = HOURLY_REFRESH_FLAG.is_set()
             if force or (now.minute == 0 and now.hour != self.last_hourly) or self.last_hourly == -1:
                 if force:
-                    HOURLY_REFRESH_FLAGS[self.name].clear()
+                    HOURLY_REFRESH_FLAG.clear()
                 self.last_hourly = now.hour
                 try:
                     self.run_hourly()
                 except Exception as exc:
-                    log(f"SWIV Hourly Error: {exc}", level="error", agency=self.name)
+                    log(f"Hourly error: {exc}", level="error", agency=self.agency)
             sleep_with_stop(30)
 
+    def vehicles_loop(self):
+        """Fast poll: Vehicles every POLL_INTERVAL_FAST seconds."""
+        self.routes_ready.wait(timeout=30)
+        sleep_with_stop(stable_stagger("vehicles"))
+        while not stop_event.is_set():
+            start = time.time()
+            try:
+                self.fetch_vehicles()
+            except Exception as exc:
+                log(f"Vehicles poll error: {exc}", level="error", agency=self.agency)
+            elapsed = time.time() - start
+            sleep_with_stop(max(0, POLL_INTERVAL_FAST - elapsed) + random.random() * ARGS.poll_jitter)
+
+    def arrivals_loop(self):
+        """Medium poll: StopArrivalTimes every POLL_INTERVAL_MEDIUM seconds."""
+        self.routes_ready.wait(timeout=30)
+        sleep_with_stop(stable_stagger("arrivals"))
+        while not stop_event.is_set():
+            start = time.time()
+            try:
+                self.fetch_stop_arrival_times()
+            except Exception as exc:
+                log(f"StopArrivalTimes poll error: {exc}", level="error", agency=self.agency)
+            elapsed = time.time() - start
+            sleep_with_stop(max(0, POLL_INTERVAL_MEDIUM - elapsed) + random.random() * ARGS.poll_jitter)
+
+    def capacities_loop(self):
+        """Slow poll: VehicleCapacities every POLL_INTERVAL_SLOW seconds."""
+        self.routes_ready.wait(timeout=30)
+        sleep_with_stop(stable_stagger("capacities"))
+        while not stop_event.is_set():
+            start = time.time()
+            try:
+                self.fetch_vehicle_capacities()
+            except Exception as exc:
+                log(f"VehicleCapacities poll error: {exc}", level="error", agency=self.agency)
+            elapsed = time.time() - start
+            sleep_with_stop(max(0, POLL_INTERVAL_SLOW - elapsed) + random.random() * ARGS.poll_jitter)
+
     def run(self):
-        log("Starting crawler runner", agency=self.name)
-        threading.Thread(target=self.hourly_loop, daemon=True).start()
-        threading.Thread(target=self.poll_loop, daemon=True).start()
+        log(f"Starting TransLoc crawler for {self.agency}", agency=self.agency)
+        threading.Thread(target=self.hourly_loop, daemon=True, name=f"hourly-{self.agency}").start()
+        threading.Thread(target=self.vehicles_loop, daemon=True, name=f"vehicles-{self.agency}").start()
+        threading.Thread(target=self.arrivals_loop, daemon=True, name=f"arrivals-{self.agency}").start()
+        threading.Thread(target=self.capacities_loop, daemon=True, name=f"capacities-{self.agency}").start()
 
 
 #### TUI ####
 
 def init_ui_state():
     with UI_STATE_LOCK:
-        for agency in TARGET_AGENCIES:
-            for stream in AGENCY_FEEDS:
-                UI_STREAM_STATE[(agency, stream)] = {
-                    "agency": agency,
-                    "stream": stream,
-                    "type": infer_stream_type(stream),
-                    "new_this_poll": 0,
-                    "total_today": 0,
-                    "last_sync_time": "Loading...",
-                }
-
-
-def trigger_ui_refresh():
-    REFRESH_REQUESTED.set()
+        for stream in AGENCY_FEEDS:
+            UI_STREAM_STATE[(TRANSLOC_AGENCY, stream)] = {
+                "agency": TRANSLOC_AGENCY,
+                "stream": stream,
+                "type": infer_stream_type(stream),
+                "new_this_poll": 0,
+                "total_today": 0,
+                "last_sync_time": "Loading...",
+            }
 
 
 def build_ui_table():
     table = Table(show_header=True, header_style="bold cyan", expand=True, box=None)
     table.add_column("Agency", style="bold", width=10)
-    table.add_column("Stream", width=16)
-    table.add_column("Type", width=10)
+    table.add_column("Stream", width=20)
+    table.add_column("Type", width=12)
     table.add_column("New/Poll", justify="right", width=10)
     table.add_column("Total Today", justify="right", width=12)
     table.add_column("Last Sync", justify="right", width=12)
@@ -676,7 +794,6 @@ def run_live_gui():
     init_ui_state()
 
     def poll_keys():
-        # Graceful keyboard exit: q or Ctrl-C.
         if termios and tty:
             try:
                 fd = sys.stdin.fileno()
@@ -691,6 +808,8 @@ def run_live_gui():
                             if ch in ("q", "Q"):
                                 stop_event.set()
                                 break
+                            elif ch in ("r", "R"):
+                                HOURLY_REFRESH_FLAG.set()
                 finally:
                     termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
             except Exception:
@@ -702,6 +821,8 @@ def run_live_gui():
                     if ch in ("q", "Q"):
                         stop_event.set()
                         break
+                    elif ch in ("r", "R"):
+                        HOURLY_REFRESH_FLAG.set()
                 time.sleep(0.25)
 
     threading.Thread(target=poll_keys, daemon=True).start()
@@ -712,9 +833,12 @@ def run_live_gui():
         if not ARGS.no_compaction:
             threading.Thread(target=compact_worker, daemon=True).start()
 
-        for agency in TARGET_AGENCIES:
-            TransitCrawlerRunner(agency).run()
-            sleep_with_stop(1.5)
+        crawler = TransLocCrawlerRunner(
+            agency=TRANSLOC_AGENCY,
+            base_url=TRANSLOC_BASE_URL,
+            api_key=TRANSLOC_API_KEY,
+        )
+        crawler.run()
 
     threading.Thread(target=delayed_worker_start, daemon=True).start()
 
@@ -724,7 +848,7 @@ def run_live_gui():
                 streams_table = build_ui_table()
                 error_panel = build_error_panel()
                 header = Text(
-                    f"SWIV Ingestor  |  {', '.join(TARGET_AGENCIES)}  |  {datetime.now(LOCAL_TZ).strftime('%Y-%m-%d %H:%M:%S %Z')}  |  q to quit",
+                    f"TransLoc Ingestor  |  {TRANSLOC_AGENCY}  |  {datetime.now(LOCAL_TZ).strftime('%Y-%m-%d %H:%M:%S %Z')}  |  q quit  r refresh",
                     style="bold white on dark_blue",
                     justify="center",
                 )
@@ -743,4 +867,4 @@ if __name__ == "__main__":
         stop_event.set()
     finally:
         stop_event.set()
-        log("SWIV ingestor stopped.", level="info", agency="SYSTEM")
+        log("TransLoc ingestor stopped.", level="info", agency="SYSTEM")

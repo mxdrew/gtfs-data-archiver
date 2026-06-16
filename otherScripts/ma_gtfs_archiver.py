@@ -2,7 +2,7 @@
 # Author Information:
 # Drew Mulcare
 # github@mxdrew.com
-# May 25, 2026 (Last updated June 11, 2026)
+# May 25, 2026 (Last updated June 16, 2026)
 #
 # Description:
 # Multi-agency runner for static GTFS and optional MBTA live ingestion.
@@ -108,7 +108,7 @@ DEFAULT_BATCH_SIZE = env_int("DEFAULT_BATCH_SIZE", 25)
 PREDICTIONS_BATCH_SIZE = env_int("PREDICTIONS_BATCH_SIZE", max(DEFAULT_BATCH_SIZE, 75))
 
 DATA_DIR = Path("data")
-EVENTS_DIR = DATA_DIR / "events"
+EVENTS_DIR = DATA_DIR / "archive"
 ARCHIVE_DIR = DATA_DIR / "archive"
 GTFS_DIR = ARCHIVE_DIR / "gtfs"
 
@@ -365,6 +365,23 @@ def writer_worker():
         for f in handles.values():
             f.close()
 
+def _align_table_to_schema(table, schema):
+    """Coerce a PyArrow table to the target schema, filling missing columns with nulls."""
+    arrays = []
+    for field in schema:
+        if field.name in table.column_names:
+            col = table.column(field.name)
+            if col.type != field.type:
+                try:
+                    col = col.cast(field.type, safe=False)
+                except Exception:
+                    col = pa.array([None] * len(table), type=field.type)
+        else:
+            col = pa.array([None] * len(table), type=field.type)
+        arrays.append(col)
+    return pa.Table.from_arrays(arrays, schema=schema)
+
+
 def parquet_compaction_worker():
     # Streams ALL orphaned/yesterday's JSONL files into Parquet and removes the source after success.
     log("Parquet compaction watchdog and recovery sweep active.")
@@ -377,6 +394,7 @@ def parquet_compaction_worker():
                     log(f"Compacting orphaned/rotated {file.name} to Parquet archive...")
                     temp_path = None
                     writer = None
+                    target_schema = None
                     try:
                         parquet_filename = file.with_suffix(".parquet").name
                         parquet_path = ARCHIVE_DIR / parquet_filename
@@ -399,12 +417,15 @@ def parquet_compaction_worker():
                             table = pa.Table.from_pandas(chunk, preserve_index=False)
 
                             if writer is None:
+                                target_schema = table.schema
                                 writer = pq.ParquetWriter(
                                     str(temp_path),
-                                    table.schema,
+                                    target_schema,
                                     compression="zstd",
                                     compression_level=ARCHIVE_ZSTD_LEVEL,
                                 )
+                            else:
+                                table = _align_table_to_schema(table, target_schema)
 
                             writer.write_table(table)
                             row_count += len(chunk)
@@ -547,20 +568,62 @@ def enhanced_poller(agency, endpoint, url):
 
 def fetch_snapshots(agency):
     # Pulls contextual snapshots for specific agency endpoints.
+    # NOTE (Task #29 fix): The MBTA V3 API rejects unfiltered GET /trips requests
+    # (HTTP 400 — requires filter[route], filter[id], filter[route_pattern], or filter[name]).
+    # We special-case "trips" here: fetch all route IDs first, then pull trips in batches.
     if not agency.get("base_url") or not agency.get("snapshot_eps"):
         return
     log("Pulling hourly snapshots...", agency_log_label=agency["prefix"])
     headers = {"Accept": "application/json"}
     if agency.get("api_key"): headers["X-API-Key"] = agency["api_key"]
 
+    # Endpoints that require a filter parameter — maps endpoint name → filter key.
+    # "trips" is auto-detected; override via agency["snapshot_eps_filtered"] if needed.
+    REQUIRE_ROUTE_FILTER = set(agency.get("snapshot_eps_require_route_filter", ["trips"]))
+
     for endpoint in agency.get("snapshot_eps", []):
         if stop_event.is_set():
             break
         try:
-            res = requests.get(f"{agency['base_url']}/{endpoint}", headers=headers, timeout=30)
-            if res.status_code == 200:
-                for r in res.json().get("data", []):
-                    write_queue.put((agency["prefix"], endpoint, "snapshot", r))
+            if endpoint in REQUIRE_ROUTE_FILTER:
+                # Fetch route IDs then pull per-route batch to satisfy the API filter requirement.
+                route_ids = fetch_api_ids(agency, "routes")
+                if not route_ids:
+                    log(
+                        f"Skipping {endpoint} snapshot: could not retrieve route IDs",
+                        agency_log_label=agency["prefix"], is_warning=True,
+                    )
+                    continue
+                batch_size = DEFAULT_BATCH_SIZE
+                for i in range(0, len(route_ids), batch_size):
+                    if stop_event.is_set():
+                        break
+                    batch = route_ids[i : i + batch_size]
+                    try:
+                        res = requests.get(
+                            f"{agency['base_url']}/{endpoint}",
+                            headers=headers,
+                            params={"filter[route]": ",".join(batch)},
+                            timeout=30,
+                        )
+                        if res.status_code == 200:
+                            for r in res.json().get("data", []):
+                                write_queue.put((agency["prefix"], endpoint, "snapshot", r))
+                        else:
+                            log(
+                                f"Snapshot {endpoint} returned HTTP {res.status_code}",
+                                agency_log_label=agency["prefix"], is_warning=True,
+                            )
+                    except Exception as e:
+                        log(
+                            f"Snapshot batch failed for {endpoint}: {e}",
+                            agency_log_label=agency["prefix"], is_warning=True,
+                        )
+            else:
+                res = requests.get(f"{agency['base_url']}/{endpoint}", headers=headers, timeout=30)
+                if res.status_code == 200:
+                    for r in res.json().get("data", []):
+                        write_queue.put((agency["prefix"], endpoint, "snapshot", r))
         except Exception: pass
 
 def fetch_gtfs_static(agency):

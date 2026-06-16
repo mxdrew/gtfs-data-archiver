@@ -366,6 +366,10 @@ def log(message, level="info", agency="PASSIOGO"):
         except Exception:
             pass
 
+    # No-TTY / Docker mode: mirror all log messages to stderr (skip verbose)
+    if not sys.stdout.isatty() and level not in ("verbose", "VERBOSE"):
+        print(f"{ts_full} [{level.upper():7s}] [{agency}] {message}", file=sys.stderr)
+
 
 class TrackedSession(requests.Session):
     def request(self, method, url, *args, **kwargs):
@@ -1367,10 +1371,14 @@ def PASSIOGO_poll_vehicles_all_agencies():
         save_cache()
 
         for agency_id, abbrev in TARGET_AGENCIES.items():
-            update_ui_poll_count(abbrev, "Vehicles", vehicle_counts.get(abbrev, 0), accumulate=True)
-            update_ui_poll_count(abbrev, "EnhancedVehicles", enhanced_counts.get(abbrev, 0), accumulate=True)
+            vc = vehicle_counts.get(abbrev, 0)
+            ec = enhanced_counts.get(abbrev, 0)
+            update_ui_poll_count(abbrev, "Vehicles", vc, accumulate=True)
+            update_ui_poll_count(abbrev, "EnhancedVehicles", ec, accumulate=True)
             touch_ui_sync(abbrev, "Vehicles")
             touch_ui_sync(abbrev, "EnhancedVehicles")
+            if vc or ec:
+                log(f"Vehicles: {vc} active, {ec} enhanced", level="info", agency=abbrev)
 
     except Exception as exc:
         for agency_id, abbrev in TARGET_AGENCIES.items():
@@ -1431,6 +1439,8 @@ def PASSIOGO_poll_trip_updates(agency_id, abbrev):
 
     update_ui_poll_count(abbrev, "TripUpdates", nc_fetched, accumulate=True)
     touch_ui_sync(abbrev, "TripUpdates", "Failed" if local_403_event.is_set() else None)
+    if nc_fetched > 0:
+        log(f"TripUpdates: {nc_fetched} ETAs fetched", level="info", agency=abbrev)
 
 
 def PASSIOGO_poll_alerts(agency_id, abbrev):
@@ -1664,7 +1674,7 @@ def run_live_gui():
     except Exception:
         fd = None
         
-    use_unix_keys = termios is not None and tty is not None and fd is not None
+    use_unix_keys = termios is not None and tty is not None and fd is not None and sys.stdin.isatty()
     old_settings = termios.tcgetattr(fd) if use_unix_keys else None
     running = True
 

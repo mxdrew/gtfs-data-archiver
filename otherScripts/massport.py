@@ -2,12 +2,12 @@
 # Author Information:
 # Drew Mulcare
 # github@mxdrew.com
-# May 30, 2026 (Last updated June 11, 2026)
+# May 30, 2026 (Last updated June 16, 2026)
 #
 # Description:
 # Dedicated ingestion engine for Massport and Logan Express realtime feeds.
 # Uses a stateful session mapping to pull hourly snapshots and prediction polls
-# for the configured Massport agency and maps them to standard Data Lake formats.
+# for the MASSPORT agency and maps them to standard Data Lake formats.
 #
 # Data Integrity & Storage:
 # Implements an append-only JSONL write path with deterministic SHA-256 hashes.
@@ -89,14 +89,8 @@ def safe_prefix(value):
     return cleaned_value.strip("_") or "agency"
 
 
-# Massport integration is fixed to one agency endpoint.
-MASSPORT_AGENCY = "MASSPORT"
-TARGET_AGENCIES = {
-    MASSPORT_AGENCY: {
-        "base_url": "https://gtfs.bos.aocadp.com",
-    }
-}
-MASSPORT_BASE_URL = TARGET_AGENCIES[MASSPORT_AGENCY]["base_url"]
+# Hardcoded Massport configuration.
+MASSPORT_BASE_URL = "https://gtfs.bos.aocadp.com"
 MASSPORT_HEADERS = {
     "Accept": "application/json",
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
@@ -115,7 +109,7 @@ GTFS_MAP = {
     "Stops": "stops",
     "Trips": "trips",
     "Collections": "collections",
-    "Predictions": "trip_updates",
+    "Predictions": "predictions",
 }
 
 
@@ -161,7 +155,6 @@ for directory in [EVENTS_DIR, ARCHIVE_DIR, LOG_DIR, CACHE_DIR]:
     directory.mkdir(parents=True, exist_ok=True)
 
 ARCHIVE_ZSTD_LEVEL = env_int("ARCHIVE_ZSTD_LEVEL", 10)
-# Polling cadence and request behavior are fixed, but can be updated here.
 POLL_INTERVAL_FAST = 20
 POLL_INTERVAL_SLOW = 15
 MASSPORT_REQUEST_TIMEOUT_SECONDS = 12
@@ -175,9 +168,6 @@ UI_STATE_LOCK = threading.Lock()
 UI_STREAM_STATE = {}
 RECENT_ERRORS = []
 HOURLY_REFRESH_FLAG = threading.Event()
-
-AGENCY_SESSIONS = {}
-SESSION_LOCK = threading.Lock()
 
 MASSPORT_COLLECTIONS_READY = threading.Event()
 
@@ -221,16 +211,16 @@ def log_api_call_summary(final=False):
     if today_total <= 0 and not final:
         return
     if previous_date is None:
-        log(f"API calls for {today_date}: {today_total}", level="info", agency=MASSPORT_AGENCY)
+        log(f"API calls for {today_date}: {today_total}", level="info")
     else:
         delta = today_total - previous_total
-        log(f"API calls for {today_date}: {today_total} ({delta:+d} vs {previous_date})", level="info", agency=MASSPORT_AGENCY)
+        log(f"API calls for {today_date}: {today_total} ({delta:+d} vs {previous_date})", level="info")
 
 
 def load_cache():
     try:
         if not MASSPORT_CACHE_FILE.exists():
-            log(f"No cache file found at {MASSPORT_CACHE_FILE}; initializing fresh.", level="info", agency=MASSPORT_AGENCY)
+            log(f"No cache file found at {MASSPORT_CACHE_FILE}; initializing fresh.", level="info")
             save_cache()
             return
         with open(MASSPORT_CACHE_FILE, "r", encoding="utf-8") as handle:
@@ -249,9 +239,9 @@ def load_cache():
         if MASSPORT_CACHE["collection_ids"]:
             MASSPORT_COLLECTIONS_READY.set()
 
-        log(f"Cache loaded from {MASSPORT_CACHE_FILE}", level="info", agency=MASSPORT_AGENCY)
+        log(f"Cache loaded from {MASSPORT_CACHE_FILE}", level="info")
     except Exception as exc:
-        log(f"Could not load cache: {exc}", level="error", agency=MASSPORT_AGENCY)
+        log(f"Could not load cache: {exc}", level="error")
         save_cache()
 
 
@@ -265,24 +255,25 @@ def save_cache():
             json.dump(payload, handle, indent=2)
         temp_path.replace(MASSPORT_CACHE_FILE)
     except Exception as exc:
-        log(f"Could not save cache: {exc}", level="error", agency=MASSPORT_AGENCY)
+        log(f"Could not save cache: {exc}", level="error")
 
 
 #### LOGGING ####
 _log_lock = threading.Lock()
 
 
-def log(message, level="info", agency=MASSPORT_AGENCY):
+def log(message, level="info", agency="MASSPORT"):
     now = datetime.now(LOCAL_TZ)
     ts_full = now.strftime("%Y-%m-%d %H:%M:%S")
     ts_short = now.strftime("%H:%M:%S")
 
-    try:
-        with _log_lock:
-            with open(LOG_FILE, "a", encoding="utf-8") as handle:
-                handle.write(f"{ts_full} [{level.upper():7s}] [{agency}] {message}\n")
-    except Exception:
-        pass
+    if level == "error":
+        try:
+            with _log_lock:
+                with open(LOG_FILE, "a", encoding="utf-8") as handle:
+                    handle.write(f"{ts_full} [{level.upper():7s}] [{agency}] {message}\n")
+        except Exception:
+            pass
 
     if level in ("error", "warning"):
         with UI_STATE_LOCK:
@@ -352,7 +343,7 @@ def normalize_jsonable(value):
     return value
 
 
-def request_json(url, headers=None, params=None, timeout=15, agency=""):
+def request_json(url, headers=None, params=None, timeout=15, agency="MASSPORT"):
     try:
         record_api_call()
         response = guarded_get(url, headers=headers or {}, params=params or {}, timeout=timeout)
@@ -372,38 +363,41 @@ def request_json(url, headers=None, params=None, timeout=15, agency=""):
 
 #### SHARED OUTPUT ####
 def history_file_path(agency, stream, date_str):
-    return EVENTS_DIR / f"{safe_prefix(agency)}_{gtfs_file_stem(stream)}_{date_str}.jsonl"
+    return EVENTS_DIR / f"MASSPORT_{gtfs_file_stem(stream)}_{date_str}.jsonl"
 
 
 def today_history_file(agency, stream):
-    return history_file_path(agency, stream, datetime.now(LOCAL_TZ).strftime("%m%d%Y"))
-
-
-def load_history_metadata(file_path):
-    hashes = {}
-    if not file_path.exists():
-        return hashes
-    with open(file_path, "r", encoding="utf-8") as handle:
-        for line in handle:
-            try:
-                entry = json.loads(line)
-                hashes[entry["hash_id"]] = True
-            except Exception:
-                continue
-    return hashes
+    return history_file_path("MASSPORT", stream, datetime.now(LOCAL_TZ).strftime("%m%d%Y"))
 
 
 seen_hashes = {}
 seen_lock = threading.Lock()
 
 
+def load_history_metadata(file_path):
+    hashes = {}
+    if not file_path.exists():
+        return hashes
+    try:
+        with open(file_path, "r", encoding="utf-8") as handle:
+            for line in handle:
+                try:
+                    entry = json.loads(line)
+                    hashes[entry["hash_id"]] = True
+                except Exception:
+                    continue
+    except Exception as exc:
+        log(f"Error loading history metadata from {file_path.name}: {exc}", level="warning")
+    return hashes
+
+
 def ensure_history_loaded(agency, stream):
-    stream_key = f"{safe_prefix(agency)}::{safe_prefix(stream)}"
+    stream_key = f"MASSPORT::{safe_prefix(stream)}"
     with seen_lock:
         if stream_key in seen_hashes:
             return stream_key
 
-    history = load_history_metadata(today_history_file(agency, stream))
+    history = load_history_metadata(today_history_file("MASSPORT", stream))
     with seen_lock:
         if stream_key not in seen_hashes:
             seen_hashes[stream_key] = history
@@ -413,14 +407,14 @@ def ensure_history_loaded(agency, stream):
 def touch_ui_sync(agency, stream, status=None):
     now_time = datetime.now(LOCAL_TZ).strftime("%H:%M:%S")
     value = status if status else now_time
-    ui_key = (agency, stream)
+    ui_key = ("MASSPORT", stream)
     with UI_STATE_LOCK:
         if ui_key in UI_STREAM_STATE:
             UI_STREAM_STATE[ui_key]["last_sync_time"] = value
 
 
 def update_ui_poll_count(agency, stream, count):
-    ui_key = (agency, stream)
+    ui_key = ("MASSPORT", stream)
     with UI_STATE_LOCK:
         if ui_key in UI_STREAM_STATE:
             UI_STREAM_STATE[ui_key]["new_batch"] = count
@@ -429,12 +423,12 @@ def update_ui_poll_count(agency, stream, count):
 def emit_record(agency, stream, event, data, endpoint="", metadata=None):
     now = datetime.now(LOCAL_TZ)
     now_ts = now.isoformat(timespec="seconds")
-    stream_key = ensure_history_loaded(agency, stream)
+    stream_key = ensure_history_loaded("MASSPORT", stream)
 
     normalized_data = normalize_jsonable(data)
     normalized_metadata = normalize_jsonable(metadata) if metadata is not None else None
     hash_payload = {
-        "agency": agency,
+        "agency": "MASSPORT",
         "stream": stream,
         "event": event,
         "endpoint": endpoint,
@@ -444,12 +438,11 @@ def emit_record(agency, stream, event, data, endpoint="", metadata=None):
     payload = json.dumps(hash_payload, sort_keys=True, separators=(",", ":"), default=str)
     hash_id = hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
-    # Verify stream setup mapping inside UI structure context
     with UI_STATE_LOCK:
         state = UI_STREAM_STATE.setdefault(
-            (agency, stream),
+            ("MASSPORT", stream),
             {
-                "agency": agency,
+                "agency": "MASSPORT",
                 "stream": stream,
                 "type": infer_stream_type(stream),
                 "new_batch": 0,
@@ -469,7 +462,7 @@ def emit_record(agency, stream, event, data, endpoint="", metadata=None):
     record = {
         "hash_id": hash_id,
         "ts": now_ts,
-        "agency": agency,
+        "agency": "MASSPORT",
         "stream": stream,
         "event": event,
         "endpoint": endpoint,
@@ -482,7 +475,7 @@ def emit_record(agency, stream, event, data, endpoint="", metadata=None):
         write_queue.put(record, timeout=2)
         return True
     except Exception:
-        log(f"Write queue is full for {agency}::{stream}; dropping record", level="error", agency=agency)
+        log(f"Write queue is full for MASSPORT::{stream}; dropping record", level="error")
         return False
 
 
@@ -497,21 +490,20 @@ def infer_stream_type(stream):
 
 def init_ui_state(load_history=True):
     with UI_STATE_LOCK:
-        for agency in TARGET_AGENCIES.keys():
-            for stream in MASSPORT_FEEDS:
-                UI_STREAM_STATE.setdefault(
-                    (agency, stream),
-                    {
-                        "agency": agency,
-                        "stream": stream,
-                        "type": infer_stream_type(stream),
-                        "new_batch": 0,
-                        "total_today": 0,
-                        "total_yesterday": 0,
-                        "last_sync": "Loading...",
-                        "last_sync_time": "Loading...",
-                    },
-                )
+        for stream in MASSPORT_FEEDS:
+            UI_STREAM_STATE.setdefault(
+                ("MASSPORT", stream),
+                {
+                    "agency": "MASSPORT",
+                    "stream": stream,
+                    "type": infer_stream_type(stream),
+                    "new_batch": 0,
+                    "total_today": 0,
+                    "total_yesterday": 0,
+                    "last_sync": "Loading...",
+                    "last_sync_time": "Loading...",
+                },
+            )
 
     if not load_history:
         return
@@ -520,7 +512,7 @@ def init_ui_state(load_history=True):
     yesterday = (datetime.now(LOCAL_TZ) - timedelta(days=1)).strftime("%m%d%Y")
     temp_state = {}
 
-    for file_path in EVENTS_DIR.glob("*.jsonl"):
+    for file_path in EVENTS_DIR.glob("MASSPORT_*.jsonl"):
         date_str = file_path.stem.rsplit("_", 1)[-1] if "_" in file_path.stem else ""
         if date_str not in {today, yesterday}:
             continue
@@ -536,16 +528,15 @@ def init_ui_state(load_history=True):
                     except Exception:
                         continue
 
-                    agency = entry.get("agency", MASSPORT_AGENCY)
                     stream = entry.get("stream", "Errors")
-                    if agency not in TARGET_AGENCIES or stream == "Errors":
+                    if stream == "Errors" or stream not in MASSPORT_FEEDS:
                         continue
 
-                    key = (agency, stream)
+                    key = ("MASSPORT", stream)
                     state = temp_state.setdefault(
                         key,
                         {
-                            "agency": agency,
+                            "agency": "MASSPORT",
                             "stream": stream,
                             "type": infer_stream_type(stream),
                             "new_batch": 0,
@@ -568,13 +559,12 @@ def init_ui_state(load_history=True):
             continue
 
     with UI_STATE_LOCK:
-        for agency in TARGET_AGENCIES.keys():
-            for stream in MASSPORT_FEEDS:
-                key = (agency, stream)
-                if key in temp_state:
-                    if temp_state[key]["last_sync_time"] != "Loading...":
-                        UI_STREAM_STATE[key]["last_sync"] = temp_state[key]["last_sync"]
-                        UI_STREAM_STATE[key]["last_sync_time"] = temp_state[key]["last_sync_time"]
+        for stream in MASSPORT_FEEDS:
+            key = ("MASSPORT", stream)
+            if key in temp_state:
+                if temp_state[key]["last_sync_time"] != "Loading...":
+                    UI_STREAM_STATE[key]["last_sync"] = temp_state[key]["last_sync"]
+                    UI_STREAM_STATE[key]["last_sync_time"] = temp_state[key]["last_sync_time"]
 
 
 _UI_REFRESHING = False
@@ -610,10 +600,9 @@ def writer_worker():
                 continue
 
             try:
-                agency = record.get("agency", MASSPORT_AGENCY)
                 stream = record.get("stream", "stream")
                 date_str = datetime.now(LOCAL_TZ).strftime("%m%d%Y")
-                filename = f"{safe_prefix(agency)}_{gtfs_file_stem(stream)}_{date_str}.jsonl"
+                filename = f"MASSPORT_{gtfs_file_stem(stream)}_{date_str}.jsonl"
                 filepath = EVENTS_DIR / filename
 
                 if filename not in handles:
@@ -622,7 +611,7 @@ def writer_worker():
                 handles[filename].write(json.dumps(record, default=str, ensure_ascii=False) + "\n")
                 handles[filename].flush()
             except Exception as exc:
-                log(f"Writer exception: {exc}", level="error", agency=agency)
+                log(f"Writer exception: {exc}", level="error")
             finally:
                 write_queue.task_done()
     finally:
@@ -631,6 +620,23 @@ def writer_worker():
                 handle.close()
             except Exception:
                 pass
+
+
+def _align_table_to_schema(table, schema):
+    """Coerce a PyArrow table to the target schema, filling missing columns with nulls."""
+    arrays = []
+    for field in schema:
+        if field.name in table.column_names:
+            col = table.column(field.name)
+            if col.type != field.type:
+                try:
+                    col = col.cast(field.type, safe=False)
+                except Exception:
+                    col = pa.array([None] * len(table), type=field.type)
+        else:
+            col = pa.array([None] * len(table), type=field.type)
+        arrays.append(col)
+    return pa.Table.from_arrays(arrays, schema=schema)
 
 
 def stringify_chunk(chunk):
@@ -656,6 +662,7 @@ def compact_jsonl_file(file_path):
     temp_handle.close()
     temp_path = Path(temp_handle.name)
     writer = None
+    target_schema = None
 
     try:
         row_count = 0
@@ -664,12 +671,15 @@ def compact_jsonl_file(file_path):
             table = pa.Table.from_pandas(chunk, preserve_index=False)
 
             if writer is None:
+                target_schema = table.schema
                 writer = pq.ParquetWriter(
                     str(temp_path),
-                    table.schema,
+                    target_schema,
                     compression="zstd",
                     compression_level=ARCHIVE_ZSTD_LEVEL,
                 )
+            else:
+                table = _align_table_to_schema(table, target_schema)
 
             writer.write_table(table)
             row_count += len(chunk)
@@ -681,9 +691,9 @@ def compact_jsonl_file(file_path):
         writer = None
         temp_path.replace(parquet_path)
         file_path.unlink()
-        log(f"Compacted {file_path.name} into {parquet_path.name} with {row_count} rows.", agency=MASSPORT_AGENCY)
+        log(f"Compacted {file_path.name} into {parquet_path.name} with {row_count} rows.")
     except Exception as exc:
-        log(f"Failed to compact {file_path.name}: {exc}", level="error", agency=MASSPORT_AGENCY)
+        log(f"Failed to compact {file_path.name}: {exc}", level="error")
     finally:
         if writer is not None:
             try:
@@ -701,15 +711,15 @@ def compact_worker():
     if not PARQUET_AVAILABLE or ARGS.no_compaction:
         return
 
-    log("Parquet compaction watchdog active.", agency=MASSPORT_AGENCY)
+    log("Parquet compaction watchdog active.")
     while not stop_event.is_set():
         try:
             today_str = datetime.now(LOCAL_TZ).strftime("%m%d%Y")
-            for file_path in EVENTS_DIR.glob("*.jsonl"):
+            for file_path in EVENTS_DIR.glob("MASSPORT_*.jsonl"):
                 if today_str not in file_path.name:
                     compact_jsonl_file(file_path)
         except Exception as exc:
-            log(f"Compaction thread error: {exc}", level="error", agency=MASSPORT_AGENCY)
+            log(f"Compaction thread error: {exc}", level="error")
 
         sleep_with_stop(60)
 
@@ -718,73 +728,101 @@ def compact_worker():
 
 def massport_poll(path, stream, event="update", timeout=12, return_data=False):
     url = f"{MASSPORT_BASE_URL}{path}"
-    touch_ui_sync(MASSPORT_AGENCY, stream, "Fetching...")
+    touch_ui_sync("MASSPORT", stream, "Fetching...")
     
-    # Initialize the latest poll counter explicitly to 0 before fetching
-    update_ui_poll_count(MASSPORT_AGENCY, stream, 0)
+    # Initialize UI count explicitly to 0 before fetching
+    update_ui_poll_count("MASSPORT", stream, 0)
     
-    data = request_json(url, headers=MASSPORT_HEADERS, timeout=timeout, agency=MASSPORT_AGENCY)
+    data = request_json(url, headers=MASSPORT_HEADERS, timeout=timeout)
     if data is None:
+        touch_ui_sync("MASSPORT", stream, "Failed")
         return (0, None) if return_data else 0
 
-    if isinstance(data, dict):
-        items = data.get("data", [data]) if "data" in data else [data]
-    elif isinstance(data, list):
+    items = []
+    if isinstance(data, list):
         items = data
+    elif isinstance(data, dict):
+        # Unpeel lists from known wrapped responses, otherwise fallback safely
+        if "data" in data:
+            items = data["data"] if isinstance(data["data"], list) else [data["data"]]
+        elif "routes" in data and isinstance(data["routes"], list):
+            items = data["routes"]
+        elif "stops" in data and isinstance(data["stops"], list):
+            items = data["stops"]
+        elif "trips" in data and isinstance(data["trips"], list):
+            items = data["trips"]
+        elif "collections" in data and isinstance(data["collections"], list):
+            items = data["collections"]
+        elif "predictions" in data and isinstance(data["predictions"], list):
+            items = data["predictions"]
+        else:
+            items = [data]
     else:
         items = [data]
 
     fetched_count = len(items)
     for item in items:
-        emit_record(MASSPORT_AGENCY, stream, event, item, endpoint=path)
+        emit_record("MASSPORT", stream, event, item, endpoint=path)
 
     # Reflect transient payload length transactionally
-    update_ui_poll_count(MASSPORT_AGENCY, stream, fetched_count)
-    touch_ui_sync(MASSPORT_AGENCY, stream)
+    update_ui_poll_count("MASSPORT", stream, fetched_count)
+    touch_ui_sync("MASSPORT", stream)
 
     return (fetched_count, items) if return_data else fetched_count
 
 
 def massport_hourly_loop():
-    last_hour = -1
+    HOURLY_STREAMS = {
+        "Routes": "/routes",
+        "Stops": "/stops",
+        "Trips": "/trips",
+        "Collections": "/collections",
+    }
+    
+    # Track successfully written date-hour keys to handle background failures and rapid retry scheduling
+    last_success_hourly = {stream: None for stream in HOURLY_STREAMS}
+
     while not stop_event.is_set():
         now = datetime.now(LOCAL_TZ)
+        current_hour_key = (now.strftime("%Y-%m-%d"), now.hour)
         force = HOURLY_REFRESH_FLAG.is_set()
 
-        if force or now.hour != last_hour or last_hour == -1:
-            if force:
-                HOURLY_REFRESH_FLAG.clear()
-            last_hour = now.hour
+        if force:
+            HOURLY_REFRESH_FLAG.clear()
+            for stream in HOURLY_STREAMS:
+                last_success_hourly[stream] = None
 
-            try:
-                touch_ui_sync(MASSPORT_AGENCY, "Routes", "Fetching...")
-                massport_poll("/routes", "Routes", event="snapshot")
+        for stream, path in HOURLY_STREAMS.items():
+            if stop_event.is_set():
+                break
 
-                touch_ui_sync(MASSPORT_AGENCY, "Stops", "Fetching...")
-                massport_poll("/stops", "Stops", event="snapshot")
+            # Poll only if we haven't succeeded for the current hour (or forced)
+            if last_success_hourly[stream] != current_hour_key:
+                try:
+                    if stream == "Collections":
+                        fetched, collections = massport_poll(path, stream, event="snapshot", return_data=True)
+                        if fetched > 0 and collections:
+                            with _CACHE_LOCK:
+                                for collection in collections:
+                                    if isinstance(collection, dict):
+                                        c_name = collection.get("name") or collection.get("id")
+                                        if c_name:
+                                            MASSPORT_CACHE["collection_ids"].add(str(c_name))
+                                    elif isinstance(collection, str):
+                                        MASSPORT_CACHE["collection_ids"].add(str(collection))
+                            if MASSPORT_CACHE["collection_ids"]:
+                                save_cache()
+                                MASSPORT_COLLECTIONS_READY.set()
+                            last_success_hourly[stream] = current_hour_key
+                    else:
+                        fetched = massport_poll(path, stream, event="snapshot")
+                        if fetched > 0:
+                            last_success_hourly[stream] = current_hour_key
+                except Exception as exc:
+                    log(f"Massport Hourly Loop Error ({stream}): {exc}", level="error")
 
-                touch_ui_sync(MASSPORT_AGENCY, "Trips", "Fetching...")
-                massport_poll("/trips", "Trips", event="snapshot")
-
-                touch_ui_sync(MASSPORT_AGENCY, "Collections", "Fetching...")
-                _, collections = massport_poll("/collections", "Collections", event="snapshot", return_data=True)
-                if collections:
-                    with _CACHE_LOCK:
-                        for collection in collections:
-                            if isinstance(collection, dict):
-                                collection_name = collection.get("name") or collection.get("id")
-                                if collection_name:
-                                    MASSPORT_CACHE["collection_ids"].add(str(collection_name))
-                            elif isinstance(collection, str):
-                                MASSPORT_CACHE["collection_ids"].add(str(collection))
-
-                    if MASSPORT_CACHE["collection_ids"]:
-                        save_cache()
-                        MASSPORT_COLLECTIONS_READY.set()
-            except Exception as exc:
-                log(f"Massport Hourly Loop Error: {exc}", level="error", agency=MASSPORT_AGENCY)
-
-        sleep_with_stop(30)
+        # Sleep a short duration to retry failures quickly without blocking the main event loops
+        sleep_with_stop(15)
 
 
 def massport_predictions_loop():
@@ -793,10 +831,9 @@ def massport_predictions_loop():
     while not stop_event.is_set():
         start_time = time.time()
         try:
-            touch_ui_sync(MASSPORT_AGENCY, "Predictions", "Fetching...")
+            touch_ui_sync("MASSPORT", "Predictions", "Fetching...")
             collection_ids = sorted(MASSPORT_CACHE["collection_ids"])
             if collection_ids:
-                # Predictions update transient totals independently per collection chunk iteration
                 total_fetched_this_poll = 0
                 for collection_id in collection_ids:
                     if stop_event.is_set():
@@ -805,20 +842,14 @@ def massport_predictions_loop():
                     cnt = massport_poll(path, "Predictions", timeout=10)
                     total_fetched_this_poll += cnt
                     sleep_with_stop(0.1)
-                update_ui_poll_count(MASSPORT_AGENCY, "Predictions", total_fetched_this_poll)
+                update_ui_poll_count("MASSPORT", "Predictions", total_fetched_this_poll)
             else:
-                log("Predictions waiting for collection IDs", level="warning", agency=MASSPORT_AGENCY)
+                log("Predictions waiting for collection IDs", level="warning")
         except Exception as exc:
-            log(f"Massport Predictions Loop Error: {exc}", level="error", agency=MASSPORT_AGENCY)
+            log(f"Massport Predictions Loop Error: {exc}", level="error")
 
         elapsed = time.time() - start_time
         sleep_with_stop(max(0, POLL_INTERVAL_FAST - elapsed) + random.random() * ARGS.poll_jitter)
-
-
-def run_massport():
-    log("Starting MASSPORT runners", agency=MASSPORT_AGENCY)
-    threading.Thread(target=massport_hourly_loop, daemon=True).start()
-    threading.Thread(target=massport_predictions_loop, daemon=True).start()
 
 
 #### UI ####
@@ -849,7 +880,7 @@ def get_layout(refresh_flash=False):
     table.add_column("Unique (Today)", justify="center", vertical="middle")
 
     if not rows:
-        table.add_row(Text(MASSPORT_AGENCY, style="bold white"), Text("Loading...", style="yellow"), "", "", "0", "0")
+        table.add_row(Text("MASSPORT", style="bold white"), Text("Loading...", style="yellow"), "", "", "0", "0")
     else:
         for state in rows:
             stream_style = "green" if state["type"] == "Hourly" else "cyan"
@@ -869,13 +900,12 @@ def get_layout(refresh_flash=False):
             )
             new_batch_style = "dim" if state["new_batch"] == 0 else "green"
 
-            # Compute the total length of today's in-memory hash store directly for true distinct count integrity
-            stream_key = f"{safe_prefix(state['agency'])}::{safe_prefix(state['stream'])}"
+            stream_key = f"MASSPORT::{safe_prefix(state['stream'])}"
             with seen_lock:
                 true_unique_today = len(seen_hashes.get(stream_key, {}))
 
             table.add_row(
-                Text(state["agency"], style="bold white"),
+                Text("MASSPORT", style="bold white"),
                 Text(f"{state['stream']} ({state['type']})", style=stream_style),
                 Text(gtfs_file_stem(state["stream"]), style="dim"),
                 Text(sync_time, style=sync_style),
@@ -887,7 +917,7 @@ def get_layout(refresh_flash=False):
         error_text = Text()
         for entry in errors[-5:]:
             error_text.append(
-                f"[{entry.get('ts_str', '')}] [{entry.get('agency', MASSPORT_AGENCY)}] {entry.get('message', '')}\n",
+                f"[{entry.get('ts_str', '')}] [{entry.get('agency', 'MASSPORT')}] {entry.get('message', '')}\n",
                 style="bold red",
             )
     else:
@@ -918,7 +948,7 @@ _refresh_flash_until = 0.0
 def trigger_full_refresh():
     global _refresh_flash_until
     _refresh_flash_until = time.time() + 4.0
-    log("Manual refresh requested (R key)", level="warning", agency=MASSPORT_AGENCY)
+    log("Manual refresh requested (R key)", level="warning")
     HOURLY_REFRESH_FLAG.set()
     trigger_ui_refresh()
 
@@ -928,7 +958,7 @@ def start_workers():
     threading.Thread(target=writer_worker, daemon=True).start()
     if PARQUET_AVAILABLE and not ARGS.no_compaction:
         threading.Thread(target=compact_worker, daemon=True).start()
-    log("Starting Massport loops", agency=MASSPORT_AGENCY)
+    log("Starting Massport loops")
     threading.Thread(target=massport_hourly_loop, daemon=True).start()
     threading.Thread(target=massport_predictions_loop, daemon=True).start()
 
@@ -984,7 +1014,6 @@ def run_live_gui():
             if not TUI_READY.is_set():
                 TUI_READY.set()
             
-            # Instantly fire history file log line checks inside background thread context
             trigger_ui_refresh()
 
             while running and not stop_event.is_set():
@@ -1004,9 +1033,8 @@ def run_live_gui():
 
 
 def main():
-    log(f"Massport ingestor starting. Data dir: {DATA_DIR}  Log: {LOG_FILE}", agency=MASSPORT_AGENCY)
+    log(f"Massport ingestor starting. Data dir: {DATA_DIR}  Log: {LOG_FILE}")
     
-    # Render layout scaffolding immediately to avoid blank screens
     init_ui_state(load_history=False)
     
     try:
@@ -1016,7 +1044,7 @@ def main():
     finally:
         stop_event.set()
         log_api_call_summary(final=True)
-        log("Massport ingestor stopped.", agency=MASSPORT_AGENCY)
+        log("Massport ingestor stopped.")
 
 
 if __name__ == "__main__":

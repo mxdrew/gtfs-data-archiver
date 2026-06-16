@@ -2,7 +2,7 @@
 # Author Information:
 # Drew Mulcare
 # github@mxdrew.com
-# May 30, 2026 (Last updated June 11, 2026)
+# May 30, 2026 (Last updated June 30, 2026)
 #
 # Description:
 # Dedicated ingestion engine for Clever Devices BusTime® Developer API v3.
@@ -212,8 +212,9 @@ def get_system_state():
 def set_system_state(new_state):
     global _SYSTEM_STATE
     with _STATE_LOCK:
-        if _SYSTEM_STATE != new_state:
-            _SYSTEM_STATE = new_state
+        if _SYSTEM_STATE == new_state:
+            return
+        _SYSTEM_STATE = new_state
     log(f"State transition → {new_state}", level="info", agency="SYSTEM")
 
 def get_poll_interval():
@@ -444,12 +445,13 @@ def log(message, level="info", agency="SYSTEM"):
     ts_full = now.strftime("%Y-%m-%d %H:%M:%S")
     ts_short = now.strftime("%H:%M:%S")
     
-    try:
-        with _log_lock:
-            with open(LOG_FILE, "a", encoding="utf-8") as handle:
-                handle.write(f"{ts_full} [{level.upper():7s}] [{agency}] {message}\n")
-    except Exception:
-        pass
+    if level == "error":
+        try:
+            with _log_lock:
+                with open(LOG_FILE, "a", encoding="utf-8") as handle:
+                    handle.write(f"{ts_full} [{level.upper():7s}] [{agency}] {message}\n")
+        except Exception:
+            pass
 
     if level in ("error", "warning"):
         with UI_STATE_LOCK:
@@ -471,6 +473,10 @@ def log(message, level="info", agency="SYSTEM"):
             write_queue.put(err_record, timeout=0.1)
         except Exception:
             pass
+
+    # No-TTY / Docker mode: mirror all log messages to stderr (skip verbose)
+    if not sys.stdout.isatty() and level not in ("verbose", "VERBOSE"):
+        print(f"{ts_full} [{level.upper():7s}] [{agency}] {message}", file=sys.stderr)
 
 #### NETWORK CONSUMERS ####
 def get_agency_session(agency):
@@ -883,6 +889,23 @@ def writer_worker():
             except Exception:
                 pass
 
+def _align_table_to_schema(table, schema):
+    """Coerce a PyArrow table to the target schema, filling missing columns with nulls."""
+    arrays = []
+    for field in schema:
+        if field.name in table.column_names:
+            col = table.column(field.name)
+            if col.type != field.type:
+                try:
+                    col = col.cast(field.type, safe=False)
+                except Exception:
+                    col = pa.array([None] * len(table), type=field.type)
+        else:
+            col = pa.array([None] * len(table), type=field.type)
+        arrays.append(col)
+    return pa.Table.from_arrays(arrays, schema=schema)
+
+
 def stringify_chunk(chunk):
     for col in ["data", "metadata"]:
         if col in chunk.columns:
@@ -904,18 +927,22 @@ def compact_worker():
                     parquet_path = ARCHIVE_DIR / file_path.with_suffix(".parquet").name
                     temp_path = Path(str(parquet_path) + ".tmp")
                     writer = None
+                    target_schema = None
                     row_count = 0
                     try:
                         for chunk in pd.read_json(file_path, lines=True, chunksize=50000):
                             chunk = stringify_chunk(chunk)
                             table = pa.Table.from_pandas(chunk, preserve_index=False)
                             if writer is None:
+                                target_schema = table.schema
                                 writer = pq.ParquetWriter(
                                     str(temp_path),
-                                    table.schema,
+                                    target_schema,
                                     compression="zstd",
                                     compression_level=ARCHIVE_ZSTD_LEVEL,
                                 )
+                            else:
+                                table = _align_table_to_schema(table, target_schema)
                             writer.write_table(table)
                             row_count += len(chunk)
                         if writer is not None:
@@ -1280,6 +1307,7 @@ def bustime_vehicle_loop():
 
             update_ui_poll_count(agency, "Vehicles", total_fetched, accumulate=False)
             touch_ui_sync(agency, "Vehicles", "Failed" if local_err and not total_fetched else None)
+            log(f"Vehicles: {total_fetched} fetched, {len(live_vids)} live IDs tracked", level="info", agency=agency)
             
             if live_vids:
                 with _CACHE_LOCK:
@@ -1525,7 +1553,7 @@ def run_live_gui():
     except Exception:
         fd = None
         
-    use_unix_keys = termios is not None and tty is not None and fd is not None
+    use_unix_keys = termios is not None and tty is not None and fd is not None and sys.stdin.isatty()
     old_settings = termios.tcgetattr(fd) if use_unix_keys else None
     running = True
 

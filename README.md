@@ -298,25 +298,13 @@ docker compose -f docker-compose.yaml up -d --build
 
 ## Extra Scripts
 
-The `otherScripts/` folder contains dedicated ingestion runners for agency-specific platforms and one multi-agency orchestrator. 
+The `otherScripts/` folder contains dedicated ingestion runners for agency-specific platforms and one multi-agency orchestrator. The only one I reccommend using is `ma_gtfs_archiver.py`, which is a multi-agency runner for static GTFS pulls (MBTA, 14 Massachusetts Regional Transit Agencies, Yankee Line, Massport, some of the ferry operators, and a few local bus routes) with optional MBTA live ingestion. The others are included for informational purposes only.
 
-_**DISCLAIMER**: <u>These should be used at your own discretion and risk</u>. They are not maintained. They are also not tested to the same degree as the main `gtfs_archiver.py` script, so they may contain bugs or issues that could cause data loss or other problems. Especially as not all of the APIs or endpoints queried are necessarily supported by their providers (i.e., they are meant to feed their own realtime maps, not necessairly to be queried by the public). If you choose to use anything in `otherScripts/`, please review the code carefully, consider if you _<u>realllllyyyyy</u>_ want to run them, and also consider running them in a test environment first. These are really only included for informational purposes._
-
-- `otherScripts/bustime.py`: Clever Devices BusTime ingestion for the configured agency feed.
-- `otherScripts/massport.py`: Massport and Logan Express polling workflow.
-- `otherScripts/passigo.py`: PassioGo ingestion for configured agency IDs.
-- `otherScripts/routematch.py`: RouteMatch ingestion for configured agency/feed endpoints.
-- `otherScripts/gtfsrt.py`: GTFS-RT protobuf ingestion for configured agencies (PVTA, MVRTA). Polls VehiclePosition, TripUpdate, and Alert feeds.
-- `otherScripts/swiv.py`: SWIV CAD AVL ingestion for configured agencies (GATRA, WRTA, LRTA). Crawls SystemConfig, TopoBase, Vehicles, Alerts, and TopoRefresh streams.
-- `otherScripts/ma_gtfs_archiver.py`: multi-agency runner for static GTFS pulls (MBTA, 14 Massachusetts Regional Transit Agencies, Yankee Line, and Massport) with optional MBTA live ingestion.
-
-Everything in `otherScripts` reads environment-based configuration and writes outputs under the configured data directory.
+_**DISCLAIMER**: <u>These should be used at your own discretion and risk</u>. They are not maintained. They are also not tested to the same degree as the main `gtfs_archiver.py` script, so they may contain bugs or issues that could cause data loss or other problems. Especially as not all of the APIs or endpoints queried are necessarily supported by their providers (i.e., they are meant to feed the agency's own realtime maps, not necessairly to be queried by the public, and by doing so you may be causing disruption or getting your IP blocked). If you choose to use anything else in `otherScripts/`, please review the code carefully, consider if you _<u>realllllyyyyy</u>_ want to run them, and also consider running them in a test environment first. These are really only included for informational purposes._
 
 ### Root `.env` Variables `otherScripts`
-The root `.env` includes variables for scripts tracked in git (non-ignored scripts):
-
-- `gtfs_archiver.py`:
-`API_KEY`, `SYNC_TIMEZONE`, `AGENCY_NAME`, `BASE_URL`, `GTFS_URL`, `ENABLE_BASE_STREAMS`, `ENABLE_ROUTE_STREAMS`, `ENABLE_SNAPSHOT_PULLS`, `ENABLE_ENHANCED_STREAMS`, `ENABLE_GTFS_STATIC`, `BASE_STREAMS`, `ROUTE_STREAMS`, `SNAPSHOT_EPS`, `ENHANCED_POLL_INTERVAL_SECONDS`, `VEHICLES_ENHANCED_URL`, `ALERTS_ENHANCED_URL`, `TRIPS_ENHANCED_URL`, `DEFAULT_BATCH_SIZE`, `LOG_LEVEL`, `ARCHIVE_ZSTD_LEVEL`
+Everything in `otherScripts` reads environment-based configuration and writes outputs under the configured data directory.
+Said `.env` includes:
 
 - `otherScripts/ma_gtfs_archiver.py`:
 `MBTA_API_KEY`, `GTFS_DOWNLOAD_USER_AGENT`, plus shared runtime variables `SYNC_TIMEZONE`, `ARCHIVE_ZSTD_LEVEL`, `LOG_LEVEL`
@@ -338,6 +326,9 @@ uses fixed in-script agency and polling values; only shared runtime variables ap
 
 - `otherScripts/swiv.py`:
 `SWIV_TARGET_AGENCIES` (optional; comma-separated list of agencies to enable, defaults to all), plus shared runtime variables `SYNC_TIMEZONE`, `ARCHIVE_ZSTD_LEVEL`, `POLL_INTERVAL_CRAWLER`, `DATA_DIR`, `DATA_DIR_WSL`.
+
+- `otherScripts/transloc.py`:
+`TRANSLOC_AGENCY` (optional; defaults to NRTA), `TRANSLOC_BASE_URL` (optional; defaults to nrtawave.transloc.com relay), `TRANSLOC_API_KEY` (optional; defaults to public map key), plus shared runtime variables `SYNC_TIMEZONE`, `ARCHIVE_ZSTD_LEVEL`, `POLL_INTERVAL_FAST`, `POLL_INTERVAL_MEDIUM`, `POLL_INTERVAL_SLOW`, `DATA_DIR`, `DATA_DIR_WSL`.
 
 ## Installation
 

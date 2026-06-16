@@ -25,6 +25,7 @@ import json
 import hashlib
 import os
 import random
+import re
 import tempfile
 import threading
 import time
@@ -132,14 +133,8 @@ def default_data_dir():
     return Path(env_required("DATA_DIR"))
 
 
-# GTFS-RT agency configurations. Keys match the abbreviation emitted in records.
+# GTFS-RT agency configurations (protobuf-based). PVTA uses InfoPoint REST (see below).
 GTFSRT_AGENCIES = {
-    "PVTA": {
-        "base_url": "https://bustracker.pvta.com/infopoint/GTFS-Realtime.ashx",
-        "url_style": "query",     # URL style: ?Type={endpoint}
-        "endpoints": ["VehiclePosition", "TripUpdate", "Alert"],
-        "headers": {"Accept": "application/x-protobuf"},
-    },
     "MVRTA": {
         "base_url": "https://meva.syncromatics.com/gtfs-rt",
         "url_style": "path",      # URL style: {base_url}/{endpoint}
@@ -155,7 +150,13 @@ TARGET_AGENCIES = {
     if not _target_env or k in _target_env
 }
 
-SUPPORTED_AGENCIES = tuple(TARGET_AGENCIES.keys())
+# PVTA uses InfoPoint REST API (bustracker.pvta.com), not GTFS-RT protobuf.
+PVTA_AGENCY_KEY = "PVTA"
+PVTA_INFOPOINT_BASE = env_text("PVTA_INFOPOINT_BASE", "https://bustracker.pvta.com/InfoPoint/rest")
+PVTA_INFOPOINT_STREAMS = ("VehiclePositions", "Alerts")
+
+# Combined supported agencies: GTFS-RT (MVRTA) + InfoPoint (PVTA)
+SUPPORTED_AGENCIES = tuple(TARGET_AGENCIES.keys()) + (PVTA_AGENCY_KEY,)
 
 ARGS = SimpleNamespace(
     no_compaction=False,
@@ -186,6 +187,7 @@ REFRESH_REQUESTED = threading.Event()
 _log_lock = threading.Lock()
 
 FEEDS_PER_AGENCY = {k: tuple(v["endpoints"]) for k, v in TARGET_AGENCIES.items()}
+FEEDS_PER_AGENCY[PVTA_AGENCY_KEY] = PVTA_INFOPOINT_STREAMS
 
 
 #### LOGGING ####
@@ -223,6 +225,10 @@ def log(message, level="info", agency=""):
             write_queue.put(err_record, timeout=0.1)
         except Exception:
             pass
+
+    # No-TTY / Docker mode: mirror all log messages to stderr (skip verbose)
+    if not sys.stdout.isatty() and level not in ("verbose", "VERBOSE"):
+        print(f"{ts_full} [{level.upper():7s}] [{agency}] {message}", file=sys.stderr)
 
 
 #### SHARED HTTP ####
@@ -547,6 +553,7 @@ def sync_poller(agency_key, endpoint, interval):
                     if emit_record(agency_key, endpoint, "update", record, endpoint=url):
                         new_count += 1
 
+                log(f"{endpoint}: {new_count} entities", level="info", agency=agency_key)
                 with UI_STATE_LOCK:
                     state = UI_STREAM_STATE.get((agency_key, endpoint))
                     if state:
@@ -581,6 +588,169 @@ def run_agency(agency_key):
             args=(agency_key, endpoint, interval),
             daemon=True,
         ).start()
+
+
+#### PVTA INFOPOINT REST POLLING ####
+
+def parse_infopoint_date(raw):
+    """Parse .NET JSON date /Date(ms±offset)/ → ISO-8601 string in LOCAL_TZ."""
+    if not raw:
+        return None
+    m = re.search(r'/Date\((\d+)([+-]\d{4})?\)/', str(raw))
+    if not m:
+        return str(raw)
+    try:
+        dt = datetime.fromtimestamp(int(m.group(1)) / 1000.0, tz=LOCAL_TZ)
+        return dt.isoformat(timespec="seconds")
+    except Exception:
+        return str(raw)
+
+
+def pvta_vehicles_poller(interval):
+    """
+    Polls PVTA InfoPoint GetVisibleRoutes and emits one VehiclePositions record
+    per active vehicle (deduplicated by hash — unchanged positions are dropped).
+    """
+    session = get_http_session()
+    url = f"{PVTA_INFOPOINT_BASE}/Routes/GetVisibleRoutes"
+    sleep_with_stop(stable_stagger("PVTA:VehiclePositions", 5))
+
+    while not stop_event.is_set():
+        start_time = time.time()
+        try:
+            resp = session.get(url, timeout=15, headers={"Accept": "application/json"})
+            if resp.status_code == 200:
+                routes = resp.json()
+                seen_vids = set()
+                new_count = 0
+
+                for route in routes:
+                    route_id = route.get("RouteId")
+                    route_abbr = route.get("RouteAbbreviation") or route.get("ShortName")
+                    route_name = route.get("LongName") or route.get("GoogleDescription")
+                    for vehicle in route.get("Vehicles", []):
+                        vid = vehicle.get("VehicleId")
+                        if vid in seen_vids:
+                            continue
+                        seen_vids.add(vid)
+
+                        record_data = {
+                            "vehicle_id": vid,
+                            "vehicle_name": vehicle.get("Name"),
+                            "vehicle_farebox_id": vehicle.get("VehicleFareboxId"),
+                            "route_id": route_id,
+                            "route_abbr": route_abbr,
+                            "route_name": route_name,
+                            "run_id": vehicle.get("RunId"),
+                            "trip_id": vehicle.get("TripId"),
+                            "block_farebox_id": vehicle.get("BlockFareboxId"),
+                            "latitude": vehicle.get("Latitude"),
+                            "longitude": vehicle.get("Longitude"),
+                            "heading": vehicle.get("Heading"),
+                            "speed": vehicle.get("Speed"),
+                            "direction": vehicle.get("Direction"),
+                            "direction_long": vehicle.get("DirectionLong"),
+                            "destination": vehicle.get("Destination"),
+                            "last_stop": vehicle.get("LastStop"),
+                            "stop_id": vehicle.get("StopId"),
+                            "on_board": vehicle.get("OnBoard"),
+                            "occupancy_status": vehicle.get("OccupancyStatus"),
+                            "occupancy_label": vehicle.get("OccupancyStatusReportLabel"),
+                            "deviation": vehicle.get("Deviation"),
+                            "op_status": vehicle.get("OpStatus"),
+                            "display_status": vehicle.get("DisplayStatus"),
+                            "comm_status": vehicle.get("CommStatus"),
+                            "gps_status": vehicle.get("GPSStatus"),
+                            "seating_capacity": vehicle.get("SeatingCapacity"),
+                            "total_capacity": vehicle.get("TotalCapacity"),
+                            "property_name": vehicle.get("PropertyName"),
+                            "last_updated": parse_infopoint_date(vehicle.get("LastUpdated", "")),
+                        }
+
+                        if emit_record(PVTA_AGENCY_KEY, "VehiclePositions", "update", record_data):
+                            new_count += 1
+
+                touch_ui_sync(PVTA_AGENCY_KEY, "VehiclePositions")
+                log(
+                    f"VehiclePositions: {new_count} new from {len(seen_vids)} active vehicles",
+                    level="info",
+                    agency=PVTA_AGENCY_KEY,
+                )
+                with UI_STATE_LOCK:
+                    state = UI_STREAM_STATE.get((PVTA_AGENCY_KEY, "VehiclePositions"))
+                    if state:
+                        state["new_this_poll"] = new_count
+            else:
+                log(f"HTTP {resp.status_code} from GetVisibleRoutes", level="warning", agency=PVTA_AGENCY_KEY)
+        except Exception as exc:
+            log(f"Vehicles poller error: {exc}", level="error", agency=PVTA_AGENCY_KEY)
+
+        elapsed = time.time() - start_time
+        sleep_with_stop(max(0, interval - elapsed) + random.random() * ARGS.poll_jitter)
+
+
+def pvta_alerts_poller(interval):
+    """
+    Polls PVTA InfoPoint GetCurrentMessages and emits one Alerts record per message.
+    """
+    session = get_http_session()
+    url = f"{PVTA_INFOPOINT_BASE}/PublicMessages/GetCurrentMessages"
+    sleep_with_stop(stable_stagger("PVTA:Alerts", 5))
+
+    while not stop_event.is_set():
+        start_time = time.time()
+        try:
+            resp = session.get(url, timeout=15, headers={"Accept": "application/json"})
+            if resp.status_code == 200:
+                messages = resp.json()
+                new_count = 0
+                for msg in messages:
+                    record_data = {
+                        "message_id": msg.get("MessageId"),
+                        "header": msg.get("Header"),
+                        "message": msg.get("Message"),
+                        "routes": msg.get("Routes", []),
+                        "priority": msg.get("Priority"),
+                        "cause": msg.get("CauseReportLabel"),
+                        "effect": msg.get("EffectReportLabel"),
+                        "days_of_week": msg.get("DaysOfWeek"),
+                        "from_date": parse_infopoint_date(msg.get("FromDate", "")),
+                        "to_date": parse_infopoint_date(msg.get("ToDate", "")),
+                        "url": msg.get("URL"),
+                        "published": msg.get("Published"),
+                        "is_primary_record": msg.get("IsPrimaryRecord"),
+                    }
+                    if emit_record(PVTA_AGENCY_KEY, "Alerts", "update", record_data):
+                        new_count += 1
+
+                touch_ui_sync(PVTA_AGENCY_KEY, "Alerts")
+                log(f"Alerts: {new_count} new from {len(messages)} active", level="info", agency=PVTA_AGENCY_KEY)
+                with UI_STATE_LOCK:
+                    state = UI_STREAM_STATE.get((PVTA_AGENCY_KEY, "Alerts"))
+                    if state:
+                        state["new_this_poll"] = new_count
+            else:
+                log(f"HTTP {resp.status_code} from GetCurrentMessages", level="warning", agency=PVTA_AGENCY_KEY)
+        except Exception as exc:
+            log(f"Alerts poller error: {exc}", level="error", agency=PVTA_AGENCY_KEY)
+
+        elapsed = time.time() - start_time
+        sleep_with_stop(max(0, interval - elapsed) + random.random() * ARGS.poll_jitter)
+
+
+def run_pvta_infopoint():
+    """Spawn PVTA InfoPoint polling threads (VehiclePositions + Alerts)."""
+    log("Starting PVTA InfoPoint REST runner", agency=PVTA_AGENCY_KEY)
+    threading.Thread(
+        target=pvta_vehicles_poller,
+        args=(POLL_INTERVAL_FAST,),
+        daemon=True,
+    ).start()
+    threading.Thread(
+        target=pvta_alerts_poller,
+        args=(POLL_INTERVAL_SLOW,),
+        daemon=True,
+    ).start()
 
 
 #### TUI ####
@@ -683,6 +853,7 @@ def run_live_gui():
         for agency_key in TARGET_AGENCIES:
             run_agency(agency_key)
             sleep_with_stop(1.5)
+        run_pvta_infopoint()
 
     threading.Thread(target=delayed_worker_start, daemon=True).start()
 

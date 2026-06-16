@@ -2,7 +2,7 @@
 # Author Information:
 # Drew Mulcare
 # github@mxdrew.com
-# May 28, 2026 (Last updated June 11, 2026)
+# May 28, 2026 (Last updated June 30, 2026)
 #
 # Description:
 # Dedicated ingestion engine for RouteMatch Transit Systems.
@@ -95,30 +95,38 @@ def safe_prefix(value):
     return cleaned_value.strip("_") or "agency"
 
 def default_data_dir():
-    configured = os.environ.get("DATA_DIR")
-    if configured:
-        return Path(configured)
+    # Prefer DATA_DIR_WSL (cross-platform, used by all other scripts)
+    raw = os.environ.get("DATA_DIR_WSL", "").strip()
+    if not raw:
+        raw = os.environ.get("DATA_DIR", "").strip()
+    if raw:
+        is_windows = os.name == "nt"
+        if is_windows and raw.startswith("/mnt/"):
+            parts = raw.split("/")
+            if len(parts) >= 3:
+                drive = parts[2].upper()
+                rest = "\\".join(parts[3:])
+                raw = f"{drive}:\\{rest}"
+        elif not is_windows and len(raw) >= 2 and raw[1] == ":":
+            drive = raw[0].lower()
+            rest = raw[2:].replace("\\", "/").lstrip("/")
+            raw = f"/mnt/{drive}/{rest}"
+        return Path(raw)
 
-    def is_wsl():
-        try:
-            if os.name != "posix":
-                return False
-            with open("/proc/version", "r", encoding="utf-8") as f:
-                v = f.read()
-            return "microsoft" in v.lower() or "wsl" in v.lower()
-        except Exception:
-            return bool(os.environ.get("WSL_INTEROP") or os.environ.get("WSLENV"))
-
-    if is_wsl():
-        return Path("/mnt/c/Users/drewm/GitHub/gtfs-data-archiver/data")
-
-    return Path("C:/Users/drewm/GitHub/gtfs-data-archiver/data")
+    # Fallback: next to this script
+    return Path(__file__).parent / "data"
 
 ARGS = SimpleNamespace(
     no_compaction=False,
     global_concurrency=12,
     poll_jitter=1.25,
 )
+
+# Set to True to skip polling /departures/byStop/{id} entirely.
+# BRTA's firewall blocks this endpoint from server IPs — it works in a browser
+# but returns "Request Rejected" from any non-residential IP. Vehicles and trips
+# still collect fine; departure predictions can be inferred from TripByID data.
+SKIP_DEPARTURES_BY_STOP = True
 
 ROUTEMATCH_AGENCY = env_text("ROUTEMATCH_AGENCY").upper()
 ROUTEMATCH_BASE_URL = env_text("ROUTEMATCH_BASE_URL").rstrip("/")
@@ -341,6 +349,10 @@ def log(message, level="info", agency=ROUTEMATCH_AGENCY):
         except Exception:
             pass
 
+    # No-TTY / Docker mode: mirror all log messages to stderr (skip verbose)
+    if not sys.stdout.isatty() and level not in ("verbose", "VERBOSE"):
+        print(f"{ts_full} [{level.upper():7s}] [{agency}] {message}", file=sys.stderr)
+
 
 #### SHARED HTTP ####
 _http_session = None
@@ -386,6 +398,11 @@ def request_json(url, headers=None, params=None, timeout=10):
             return response.json()
         except Exception:
             text = response.text.strip()
+            # Discard HTML responses (WAF rejections, login redirects, etc.) — never store as data
+            text_lower = text.lower()
+            if text_lower.startswith("<html") or text_lower.startswith("<!doctype") or "<title>request rejected</title>" in text_lower:
+                log(f"Received HTML response (WAF/firewall rejection?) from {url} — discarding", level="warning")
+                return None
             return {"data": text} if text else None
     except Exception as exc:
         log(f"Request failed for {url}: {exc}", level="warning")
@@ -770,25 +787,28 @@ def RouteMatch_poll_json(path, stream, event="update", params=None, timeout=8, m
         
     return (fetched_count, data) if return_data else fetched_count
 
-def RouteMatch_concurrent_fetch(path_template, ids, stream, event="update", timeout=8):
+def RouteMatch_concurrent_fetch(path_template, ids, stream, event="update", timeout=8, max_workers=None, inter_request_delay=0.0):
     if not ids:
         return 0
-        
+
+    workers = max_workers if max_workers is not None else MAX_WORKERS
     touch_ui_sync(stream, "Fetching...")
     update_ui_poll_count(stream, 0)
     total_fetched = 0
-    
+
     def fetch_id(item_id):
         if stop_event.is_set(): return 0
+        if inter_request_delay > 0:
+            time.sleep(inter_request_delay)
         encoded_id = urllib.parse.quote(str(item_id), safe="")
         path = path_template.format(id=encoded_id)
         return RouteMatch_poll_json(path, stream, event=event, timeout=timeout, skip_ui_update=True)
 
-    with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+    with ThreadPoolExecutor(max_workers=workers) as executor:
         try:
             futures = [executor.submit(fetch_id, i) for i in ids]
             for future in as_completed(futures):
-                if stop_event.is_set(): 
+                if stop_event.is_set():
                     break
                 try:
                     total_fetched += future.result()
@@ -821,13 +841,18 @@ def RouteMatch_vehicle_loop():
             emit_record("Vehicles", "update", v_data, endpoint="/vehicle")
             update_ui_poll_count("Vehicles", fetched_count)
             touch_ui_sync("Vehicles")
+            log(f"Vehicles: {fetched_count} fetched", level="info")
             RouteMatch_VEHICLES_READY.set()
 
             vehicle_ids = sorted(RouteMatch_CACHE["vehicle_ids"])
             if vehicle_ids:
-                RouteMatch_concurrent_fetch("/vehicle/{id}", vehicle_ids, "VehicleByID")
+                n = RouteMatch_concurrent_fetch("/vehicle/{id}", vehicle_ids, "VehicleByID")
+                log(f"VehicleByID: {n}/{len(vehicle_ids)} fetched", level="info")
+            trip_ids = sorted(RouteMatch_CACHE["trip_ids"])
+            log(f"  Cache: {len(vehicle_ids)} vehicles, {len(trip_ids)} trips, {len(RouteMatch_CACHE['stop_ids'])} stops", level="info")
         else:
             touch_ui_sync("Vehicles", "Failed")
+            log("Vehicles: fetch failed", level="warning")
 
         elapsed = time.time() - start_time
         sleep_with_stop(max(0, POLL_INTERVAL_FAST - elapsed) + random.random() * ARGS.poll_jitter)
@@ -852,12 +877,15 @@ def RouteMatch_paravehicle_loop():
             emit_record("ParaVehicle", "update", pv_data, endpoint="/paraVehicle")
             update_ui_poll_count("ParaVehicle", fetched_count)
             touch_ui_sync("ParaVehicle")
+            log(f"ParaVehicle: {fetched_count} fetched", level="info")
 
             paravehicle_ids = sorted(RouteMatch_CACHE["paravehicle_ids"])
             if paravehicle_ids:
-                RouteMatch_concurrent_fetch("/paraVehicle/{id}", paravehicle_ids, "ParaVehicleByID")
+                n = RouteMatch_concurrent_fetch("/paraVehicle/{id}", paravehicle_ids, "ParaVehicleByID")
+                log(f"ParaVehicleByID: {n}/{len(paravehicle_ids)} fetched", level="info")
         else:
             touch_ui_sync("ParaVehicle", "Failed")
+            log("ParaVehicle: fetch failed", level="warning")
 
         elapsed = time.time() - start_time
         sleep_with_stop(max(0, POLL_INTERVAL_FAST - elapsed) + random.random() * ARGS.poll_jitter)
@@ -867,14 +895,15 @@ def RouteMatch_trip_loop():
     RouteMatch_VEHICLES_READY.wait(timeout=15)
     while not stop_event.is_set():
         start_time = time.time()
-        
+
         trip_ids = sorted(RouteMatch_CACHE["trip_ids"])
         if trip_ids:
-            RouteMatch_concurrent_fetch("/trip/byId/{id}", trip_ids, "TripByID")
+            n = RouteMatch_concurrent_fetch("/trip/byId/{id}", trip_ids, "TripByID")
+            log(f"TripByID: {n}/{len(trip_ids)} fetched", level="info")
         else:
             touch_ui_sync("TripByID", "Waiting...")
-            log("TripByID waiting for trip IDs from Vehicles", level="warning")
-            
+            log("TripByID: no trip IDs in cache yet", level="warning")
+
         elapsed = time.time() - start_time
         sleep_with_stop(max(0, POLL_INTERVAL_FAST - elapsed) + random.random() * ARGS.poll_jitter)
 
@@ -989,6 +1018,12 @@ def RouteMatch_run_hourly():
             touch_ui_sync("StopByKeyword")
 
         RouteMatch_ROUTES_READY.set()
+        log(
+            f"Hourly feeds complete — routes={len(RouteMatch_CACHE['route_ids'])}, "
+            f"stops={len(RouteMatch_CACHE['stop_ids'])}, "
+            f"keywords={len(RouteMatch_CACHE['keywords'])}",
+            level="info",
+        )
     except Exception as e:
         log(f"Error in {ROUTEMATCH_AGENCY} hourly loop: {e}", level="error")
 
@@ -1009,16 +1044,23 @@ def RouteMatch_hourly_loop():
 
 
 def RouteMatch_departure_loop():
+    if SKIP_DEPARTURES_BY_STOP:
+        log("DeparturesByStop: disabled (SKIP_DEPARTURES_BY_STOP=True)", level="info")
+        return
     RouteMatch_ROUTES_READY.wait(timeout=30)
     while not stop_event.is_set():
         start_time = time.time()
-        
+
         stop_ids = sorted(RouteMatch_CACHE["stop_ids"])
         if stop_ids:
-            RouteMatch_concurrent_fetch("/departures/byStop/{id}", stop_ids, "DeparturesByStop", timeout=10)
+            n = RouteMatch_concurrent_fetch(
+                "/departures/byStop/{id}", stop_ids, "DeparturesByStop",
+                timeout=10, max_workers=2, inter_request_delay=0.5,
+            )
+            log(f"DeparturesByStop: {n}/{len(stop_ids)} fetched", level="info")
         else:
             touch_ui_sync("DeparturesByStop", "Waiting...")
-            log("DeparturesByStop waiting for stop IDs", level="warning")
+            log("DeparturesByStop: no stop IDs in cache yet", level="warning")
 
         elapsed = time.time() - start_time
         sleep_with_stop(max(0, POLL_INTERVAL_SLOW - elapsed) + random.random() * ARGS.poll_jitter)
@@ -1132,7 +1174,7 @@ def run_live_gui():
     except Exception:
         fd = None
 
-    use_unix_keys = termios is not None and tty is not None and fd is not None
+    use_unix_keys = termios is not None and tty is not None and fd is not None and sys.stdin.isatty()
     old_settings = termios.tcgetattr(fd) if use_unix_keys else None
     running = True
 
