@@ -30,7 +30,7 @@ _**Note:** [GATRA](https://www.gatra.org/) static GTFS is included and currently
 
 _**Additional Note:** 100% uptime is **NOT** guaranteed. Sometimes things crash or break or power goes out, but eventually I'll try to add a table indicating dates missed for the static ones - TBD though as the data isn't entirely set up in the best way for that right now._
 
-_**Yet Another Note:** A visual calendar of each transit agency's live-stream data, and when the calendar was last updated, is accessible as [`agency_realtime_coverage.html`](https://github.com/mxdrew/gtfs-data-archiver/blob/main/otherScripts/agency_realtime_coverage.html) or as a standalone page on [my website](https://mxdrew.com/agency_realtime_coverage_)._
+_**Yet Another Note:** A visual calendar of each transit agency's live-stream data, and when the calendar was last updated, is accessible as [`agency_realtime_coverage.html`](https://github.com/mxdrew/gtfs-data-archiver/blob/main/agency_realtime_coverage.html) or as a standalone page on [my website](https://mxdrew.com/agency_realtime_coverage_)._
 
 
 ## Static GTFS Script

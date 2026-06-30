@@ -1,0 +1,285 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>MA GTFS Realtime Coverage</title>
+<style>
+*,*::before,*::after{box-sizing:border-box}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+      background:#0d1117;color:#e6edf3;margin:0;padding:20px 28px}
+h1{font-size:1.2rem;font-weight:700;margin:0 0 2px}
+.meta{font-size:0.73rem;color:#8b949e;margin-bottom:18px}
+.year-bar{display:flex;gap:6px;align-items:center;margin-bottom:20px;flex-wrap:wrap}
+.year-lbl{font-size:0.8rem;color:#8b949e;margin-right:2px}
+.year-btn{background:#21262d;color:#e6edf3;border:1px solid #30363d;
+           border-radius:6px;padding:3px 12px;font-size:0.8rem;cursor:pointer}
+.year-btn:hover{background:#30363d}
+.year-btn.active{background:#1f6feb;border-color:#1f6feb;color:#fff;font-weight:600}
+#cal-root{display:grid;grid-template-columns:max-content;align-items:start;gap:16px 20px}
+.agency-block{background:#161b22;border:1px solid #30363d;
+               border-radius:8px;padding:12px 16px;width:fit-content}
+.agency-header{display:flex;align-items:baseline;gap:8px;margin-bottom:8px;flex-wrap:wrap}
+.agency-code{font-size:0.85rem;font-weight:700}
+.agency-name{font-size:0.82rem;color:#58a6ff;text-decoration:none}
+.agency-name:hover{text-decoration:underline}
+.agency-name.no-rt{color:#8b949e}
+.day-count{font-size:0.72rem;color:#8b949e}
+.cal-outer{overflow-x:auto}
+.cal-grid{display:flex;gap:0;align-items:flex-start}
+.dow-col{display:flex;flex-direction:column;gap:2px;margin-right:4px}
+.dow-lbl{font-size:0.60rem;color:#8b949e;height:11px;line-height:11px;
+          width:16px;text-align:right}
+.month-row{display:flex;gap:0;margin-bottom:2px;padding-left:20px}
+.month-lbl{font-size:0.62rem;color:#8b949e;overflow:visible;white-space:nowrap;
+            flex:0 0 13px;width:13px}
+.cal-weeks{display:flex;gap:2px}
+.week-col{display:flex;flex-direction:column;gap:2px}
+.dc{width:11px;height:11px;border-radius:2px;cursor:default}
+.dc:hover{outline:1.5px solid #58a6ff;z-index:1;position:relative}
+.dc0{background:#21262d}.dc1{background:#0e4429}
+.dc2{background:#006d32}.dc3{background:#26a641}.dc4{background:#39d353}
+.dc-blank{background:transparent;cursor:default}
+.dc-blank:hover{outline:none}
+.cal-legend{display:flex;justify-content:flex-end;align-items:center;
+             gap:4px;margin-top:5px;font-size:0.62rem;color:#8b949e}
+.legend-sq{width:11px;height:11px;border-radius:2px;flex-shrink:0}
+.tooltip{position:fixed;background:#161b22;color:#e6edf3;font-size:0.74rem;
+          border:1px solid #30363d;padding:5px 9px;border-radius:6px;
+          pointer-events:none;z-index:999;opacity:0;transition:opacity .1s;white-space:nowrap}
+.tooltip.show{opacity:1}
+</style>
+</head>
+<body>
+<h1>MA Transit - Realtime Data Coverage</h1>
+<div class="meta">Generated: June 30, 2026 at 1:05 PM EDT</div>
+<div class="year-bar"><span class="year-lbl">Year:</span><div id="yearBtns"></div></div>
+<div class="year-bar"><span class="year-lbl">Main:</span><div id="streamMain"></div></div>
+<div class="year-bar" id="sg-enhanced"><span class="year-lbl">Enhanced:</span><div id="streamEnhanced"></div></div>
+<div class="year-bar" id="sg-custom"><span class="year-lbl">Custom:</span><div id="streamCustom"></div></div>
+<div id="cal-root"></div>
+<div class="tooltip" id="tt"></div>
+
+<script>
+const AGENCIES = [{"agency":"MBTA","name":"Massachusetts Bay Transportation Authority","is_rt":true,"url":"https://www.mbta.com/","streams":{"alerts":{"2026-05-25":9717,"2026-05-27":32700,"2026-05-28":290254,"2026-05-29":90950,"2026-06-01":267986,"2026-06-02":289276,"2026-06-03":374518,"2026-06-04":346621,"2026-06-05":402217,"2026-06-06":142262,"2026-06-07":163581,"2026-06-08":253459,"2026-06-09":183312,"2026-06-10":179888,"2026-06-11":183071,"2026-06-12":209312,"2026-06-13":215638,"2026-06-14":151475,"2026-06-15":141834,"2026-06-16":173925,"2026-06-17":187165,"2026-06-18":205887,"2026-06-19":203078,"2026-06-20":197722,"2026-06-21":183812,"2026-06-22":180814,"2026-06-23":184941,"2026-06-24":179953,"2026-06-25":188100,"2026-06-26":191114,"2026-06-27":187323,"2026-06-28":159433},"alerts_enhanced":{"2026-05-25":71949,"2026-05-27":118126,"2026-05-29":337868,"2026-06-01":1167437,"2026-06-02":1287732,"2026-06-03":1532117,"2026-06-04":1543847,"2026-06-05":1611447,"2026-06-06":853609,"2026-06-07":1009550,"2026-06-08":1522954,"2026-06-09":1099585,"2026-06-10":1088191,"2026-06-11":1060040,"2026-06-12":892351,"2026-06-13":919372,"2026-06-14":690326,"2026-06-15":611053,"2026-06-16":815869,"2026-06-17":1091774,"2026-06-18":1190422,"2026-06-19":1233550,"2026-06-20":1192480,"2026-06-21":1149418,"2026-06-22":1132448,"2026-06-23":974714,"2026-06-24":976601,"2026-06-25":1043982,"2026-06-26":1106034,"2026-06-27":1067308,"2026-06-28":983089},"facilities":{"2026-05-27":15024,"2026-05-29":33804,"2026-05-30":1878,"2026-06-01":90144,"2026-06-02":90144,"2026-06-03":90144,"2026-06-04":93912,"2026-06-05":90224,"2026-06-06":41382,"2026-06-07":43263,"2026-06-08":75240,"2026-06-09":47025,"2026-06-10":47025,"2026-06-11":56430,"2026-06-12":45144,"2026-06-13":45144,"2026-06-14":45144,"2026-06-15":37620,"2026-06-16":48906,"2026-06-17":45156,"2026-06-18":45168,"2026-06-19":45168,"2026-06-20":45168,"2026-06-21":45168,"2026-06-22":45168,"2026-06-23":48932,"2026-06-24":45168,"2026-06-25":45161,"2026-06-26":45144,"2026-06-27":45144,"2026-06-28":45144},"lines":{"2026-05-27":1136,"2026-05-28":17750,"2026-05-29":2556,"2026-05-30":142,"2026-06-01":6816,"2026-06-02":6840,"2026-06-03":6960,"2026-06-04":7250,"2026-06-05":6960,"2026-06-06":3335,"2026-06-07":3335,"2026-06-08":5800,"2026-06-09":3625,"2026-06-10":3625,"2026-06-11":4350,"2026-06-12":3480,"2026-06-13":3480,"2026-06-14":3480,"2026-06-15":2900,"2026-06-16":3770,"2026-06-17":3480,"2026-06-18":3480,"2026-06-19":3480,"2026-06-20":3480,"2026-06-21":3480,"2026-06-22":3480,"2026-06-23":3770,"2026-06-24":3480,"2026-06-25":3480,"2026-06-26":3480,"2026-06-27":3480,"2026-06-28":3480},"predictions":{"2026-06-01":32444460,"2026-06-02":43491894,"2026-06-03":38403395,"2026-06-04":55967434,"2026-06-05":55745697,"2026-06-06":21790234,"2026-06-07":20847409,"2026-06-08":52025377,"2026-06-09":30754131,"2026-06-10":28814519,"2026-06-11":32134650,"2026-06-12":41829867,"2026-06-13":33307244,"2026-06-14":27760726,"2026-06-15":31926670,"2026-06-16":24760613,"2026-06-17":44217128,"2026-06-18":42312999,"2026-06-19":42435677,"2026-06-20":33370469,"2026-06-21":26718245,"2026-06-22":43622186,"2026-06-23":30520802,"2026-06-24":37044266,"2026-06-25":37302217,"2026-06-26":44109439,"2026-06-27":34303482,"2026-06-28":27904274},"routes":{"2026-05-27":1416,"2026-05-28":22102,"2026-05-29":5841,"2026-05-30":4425,"2026-05-31":4248,"2026-06-01":8496,"2026-06-02":8504,"2026-06-03":8544,"2026-06-04":8900,"2026-06-05":8544,"2026-06-06":4094,"2026-06-07":4094,"2026-06-08":7120,"2026-06-09":4450,"2026-06-10":4450,"2026-06-11":5340,"2026-06-12":4272,"2026-06-13":4272,"2026-06-14":4272,"2026-06-15":3738,"2026-06-16":4628,"2026-06-17":4272,"2026-06-18":4272,"2026-06-19":4272,"2026-06-20":4272,"2026-06-21":4272,"2026-06-22":4272,"2026-06-23":4628,"2026-06-24":4272,"2026-06-25":4272,"2026-06-26":4272,"2026-06-27":4272,"2026-06-28":4272},"route_patterns":{"2026-05-25":1728,"2026-05-27":9704,"2026-05-28":100000,"2026-05-29":38816,"2026-05-30":30325,"2026-05-31":29112,"2026-06-01":58224,"2026-06-02":58384,"2026-06-03":59208,"2026-06-04":61750,"2026-06-05":59312,"2026-06-06":27967,"2026-06-07":28451,"2026-06-08":49480,"2026-06-09":30925,"2026-06-10":30826,"2026-06-11":36780,"2026-06-12":29429,"2026-06-13":29448,"2026-06-14":29448,"2026-06-15":24510,"2026-06-16":31642,"2026-06-17":29208,"2026-06-18":29208,"2026-06-19":29208,"2026-06-20":29208,"2026-06-21":29208,"2026-06-22":29208,"2026-06-23":31602,"2026-06-24":29112,"2026-06-25":29112,"2026-06-26":29112,"2026-06-27":29112,"2026-06-28":29112},"schedules":{"2026-05-25":481798},"services":{"2026-05-25":452,"2026-05-26":5650},"shapes":{"2026-05-25":1626},"stops":{"2026-05-25":218,"2026-05-27":73551,"2026-05-28":100000,"2026-05-29":150014,"2026-05-30":85808,"2026-05-31":50000,"2026-06-01":296288,"2026-06-02":297260,"2026-06-03":296605,"2026-06-04":306900,"2026-06-05":297633,"2026-06-06":227194,"2026-06-07":237521,"2026-06-08":413080,"2026-06-09":258175,"2026-06-10":258166,"2026-06-11":309780,"2026-06-12":247829,"2026-06-13":247848,"2026-06-14":247848,"2026-06-15":206537,"2026-06-16":268476,"2026-06-17":247848,"2026-06-18":247872,"2026-06-19":247872,"2026-06-20":247872,"2026-06-21":247872,"2026-06-22":247872,"2026-06-23":268328,"2026-06-24":247392,"2026-06-25":247392,"2026-06-26":247392,"2026-06-27":247392,"2026-06-28":247392},"trips_enhanced":{"2026-05-25":530022,"2026-05-27":1100352,"2026-05-28":4696182,"2026-05-29":6248948,"2026-05-30":13430342,"2026-05-31":7635624,"2026-06-01":17697491,"2026-06-02":18780312,"2026-06-03":17863732,"2026-06-04":20634425,"2026-06-05":19145480,"2026-06-06":7988633,"2026-06-07":7270375,"2026-06-08":16021959,"2026-06-09":10318447,"2026-06-10":10110287,"2026-06-11":10380512,"2026-06-12":8213670,"2026-06-13":6374788,"2026-06-14":6944013,"2026-06-15":8565565,"2026-06-16":10769195,"2026-06-17":14323393,"2026-06-18":14030501,"2026-06-19":14873221,"2026-06-20":12349400,"2026-06-21":8026241,"2026-06-22":11826025,"2026-06-23":10233824,"2026-06-24":11303784,"2026-06-25":11875373,"2026-06-26":16259744,"2026-06-27":13203755},"vehicles":{"2026-05-25":200298,"2026-05-27":583975,"2026-05-28":3380550,"2026-05-29":6956571,"2026-05-30":4121743,"2026-05-31":3673262,"2026-06-01":10391312,"2026-06-02":11036176,"2026-06-03":10810535,"2026-06-04":10940005,"2026-06-05":10927916,"2026-06-06":2708260,"2026-06-07":3004420,"2026-06-08":8718780,"2026-06-09":5456042,"2026-06-10":5616532,"2026-06-11":5272832,"2026-06-12":5489371,"2026-06-13":3958566,"2026-06-14":3353268,"2026-06-15":4604998,"2026-06-16":5530084,"2026-06-17":5766657,"2026-06-18":5777315,"2026-06-19":5731899,"2026-06-20":4129800,"2026-06-21":3366731,"2026-06-22":5667456,"2026-06-23":5660009,"2026-06-24":5764142,"2026-06-25":5608613,"2026-06-26":5862149,"2026-06-27":4037850,"2026-06-28":3337206},"vehicles_enhanced":{"2026-05-25":208222,"2026-05-27":400,"2026-05-28":2734892,"2026-05-29":6827001,"2026-05-30":3856771,"2026-05-31":3385455,"2026-06-01":8505954,"2026-06-02":9180046,"2026-06-03":8771315,"2026-06-04":9406805,"2026-06-05":9309516,"2026-06-06":2492674,"2026-06-07":2765505,"2026-06-08":7786304,"2026-06-09":4837069,"2026-06-10":4795347,"2026-06-11":4610183,"2026-06-12":3786554,"2026-06-13":2593406,"2026-06-14":2197547,"2026-06-15":3099122,"2026-06-16":4188356,"2026-06-17":5659101,"2026-06-18":5629367,"2026-06-19":5838640,"2026-06-20":4026880,"2026-06-21":3401497,"2026-06-22":5544277,"2026-06-23":5135693,"2026-06-24":5364945,"2026-06-25":5242125,"2026-06-26":6018604,"2026-06-27":3966968,"2026-06-28":3399343}},"days":{"2026-05-25":1506030,"2026-05-27":1936384,"2026-05-28":11341730,"2026-05-29":20692369,"2026-06-01":70934608,"2026-06-02":84526568,"2026-06-03":78217073,"2026-06-04":99317849,"2026-06-05":97604946,"2026-06-06":36279644,"2026-06-07":35377504,"2026-06-08":86879553,"2026-06-09":52992786,"2026-06-10":50948856,"2026-06-11":54053968,"2026-06-12":60751279,"2026-06-13":47699206,"2026-06-14":41427547,"2026-06-15":49224547,"2026-06-16":46595464,"2026-06-17":71575182,"2026-06-18":69476491,"2026-06-19":70646065,"2026-06-20":55596751,"2026-06-21":43175944,"2026-06-22":68303206,"2026-06-23":53067243,"2026-06-24":60963115,"2026-06-25":61589827,"2026-06-26":73876484,"2026-06-27":57096086,"2026-06-28":36112745,"2026-05-30":21531434,"2026-05-31":14777701,"2026-05-26":5650},"first_date":"2026-05-25","last_date":"2026-06-28"},{"agency":"MASSPORT","name":"Massport Logan Express","is_rt":true,"url":"https://www.massport.com/logan-airport/getting-to-logan/bus-locator/","streams":{"collections":{"2026-05-28":41,"2026-05-29":41,"2026-05-30":82,"2026-06-06":41,"2026-06-11":41,"2026-06-12":41,"2026-06-16":41,"2026-06-23":41},"predictions":{"2026-05-30":172191,"2026-05-31":430227,"2026-06-01":848202,"2026-06-02":870708,"2026-06-03":425833,"2026-06-04":873914,"2026-06-05":868230,"2026-06-06":425021,"2026-06-07":427203,"2026-06-08":427719,"2026-06-09":426448,"2026-06-10":426487,"2026-06-11":427484,"2026-06-12":426436,"2026-06-13":434973,"2026-06-14":432505,"2026-06-15":368906,"2026-06-16":425570,"2026-06-17":433445,"2026-06-18":434691,"2026-06-19":431812,"2026-06-20":437660,"2026-06-21":443958,"2026-06-22":433349,"2026-06-23":426345,"2026-06-24":435237,"2026-06-25":435225,"2026-06-27":436144,"2026-06-28":429811},"routes":{"2026-05-28":20,"2026-05-29":20,"2026-05-30":40,"2026-06-06":20,"2026-06-11":20,"2026-06-12":20,"2026-06-16":20,"2026-06-23":20},"stops":{"2026-05-28":77,"2026-05-29":77,"2026-05-30":154,"2026-06-03":10,"2026-06-06":78,"2026-06-11":78,"2026-06-12":78,"2026-06-16":78,"2026-06-23":78,"2026-06-26":2},"trips":{"2026-05-28":2767,"2026-05-29":2767,"2026-05-30":5534,"2026-06-03":1210,"2026-06-05":868230,"2026-06-06":3024,"2026-06-11":3024,"2026-06-12":3024,"2026-06-16":3024,"2026-06-23":3024,"2026-06-26":86}},"days":{"2026-05-28":2905,"2026-05-29":2905,"2026-05-30":178001,"2026-06-06":428184,"2026-06-11":430647,"2026-06-12":429599,"2026-06-16":428733,"2026-06-23":429508,"2026-05-31":430227,"2026-06-01":848202,"2026-06-02":870708,"2026-06-03":427053,"2026-06-04":873914,"2026-06-05":1736460,"2026-06-07":427203,"2026-06-08":427719,"2026-06-09":426448,"2026-06-10":426487,"2026-06-13":434973,"2026-06-14":432505,"2026-06-15":368906,"2026-06-17":433445,"2026-06-18":434691,"2026-06-19":431812,"2026-06-20":437660,"2026-06-21":443958,"2026-06-22":433349,"2026-06-24":435237,"2026-06-25":435225,"2026-06-27":436144,"2026-06-28":429811,"2026-06-26":88},"first_date":"2026-05-28","last_date":"2026-06-28"},{"agency":"BAT","name":"Brockton Area Transit Authority","is_rt":true,"url":"https://www.ridebat.com/","streams":{"alerts":{"2026-06-27":1},"routes":{"2026-06-27":18,"2026-06-29":5},"stops":{"2026-06-27":829},"trips":{"2026-06-27":298196,"2026-06-28":444214,"2026-06-29":565496,"2026-06-30":62048},"vehicles":{"2026-06-27":70876,"2026-06-28":100832,"2026-06-29":135093,"2026-06-30":16855},"vehicles_enhanced":{"2026-06-27":70876,"2026-06-28":100832,"2026-06-29":135093,"2026-06-30":16855}},"days":{"2026-06-27":440796,"2026-06-29":835687,"2026-06-28":645878,"2026-06-30":95758},"first_date":"2026-06-27","last_date":"2026-06-30"},{"agency":"BRTA","name":"Berkshire Regional Transit Authority","is_rt":true,"url":"https://berkshirerta.com/","streams":{"custom_keywords":{"2026-06-27":35},"feed_info":{"2026-06-27":2},"routes":{"2026-06-27":43},"shapes":{"2026-06-27":65},"stops":{"2026-06-27":585},"trips":{"2026-06-27":88085,"2026-06-29":2288},"vehicles":{"2026-05-30":928872,"2026-06-27":5341},"vehicles_enhanced":{"2026-06-27":446186,"2026-06-29":0}},"days":{"2026-06-27":540342,"2026-06-29":2288,"2026-05-30":928872},"first_date":"2026-05-30","last_date":"2026-06-29"},{"agency":"CATA","name":"Cape Ann Transportation Authority","is_rt":false,"url":"https://www.canntran.com/","streams":{},"days":{},"first_date":"","last_date":""},{"agency":"CCRTA","name":"Cape Cod Regional Transit Authority","is_rt":false,"url":"https://www.capecodrta.org/","streams":{},"days":{},"first_date":"","last_date":""},{"agency":"FRTA","name":"Franklin Regional Transit Authority","is_rt":true,"url":"https://www.frta.org/","streams":{"alerts":{"2026-06-29":3},"routes":{"2026-06-27":10,"2026-06-29":10},"stops":{"2026-06-27":165},"trips":{"2026-06-27":24590,"2026-06-28":31403,"2026-06-29":85482,"2026-06-30":16422},"vehicles":{"2026-06-27":6501,"2026-06-28":8556,"2026-06-29":29947,"2026-06-30":4458},"vehicles_enhanced":{"2026-06-27":6501,"2026-06-29":29947,"2026-06-30":4458}},"days":{"2026-06-29":145389,"2026-06-27":37767,"2026-06-28":39959,"2026-06-30":25338},"first_date":"2026-06-27","last_date":"2026-06-30"},{"agency":"GATRA","name":"Greater Attleboro Taunton RTA","is_rt":true,"url":"https://www.gatra.org/","streams":{"alerts":{"2026-06-27":4,"2026-06-28":1,"2026-06-29":2,"2026-06-30":2},"topo_base":{"2026-06-27":2,"2026-06-28":5,"2026-06-29":3,"2026-06-30":4},"topo_refresh":{"2026-06-27":1,"2026-06-28":2,"2026-06-29":3,"2026-06-30":3},"vehicles":{"2026-06-27":38187,"2026-06-28":30647,"2026-06-29":90456,"2026-06-30":11738}},"days":{"2026-06-27":38194,"2026-06-28":30655,"2026-06-29":90464,"2026-06-30":11747},"first_date":"2026-06-27","last_date":"2026-06-30"},{"agency":"HYLINE","name":"Hy-Line Cruises","is_rt":false,"url":"https://hylinecruises.com/","streams":{},"days":{},"first_date":"","last_date":""},{"agency":"LEXPRESS","name":"Lexpress","is_rt":false,"url":"https://www.lexingtonma.gov/365/Lexpress-Bus","streams":{},"days":{},"first_date":"","last_date":""},{"agency":"LOGAN_EXPRESS","name":"LOGAN_EXPRESS","is_rt":false,"url":"","streams":{},"days":{},"first_date":"","last_date":""},{"agency":"LRTA","name":"Lowell Regional Transit Authority","is_rt":true,"url":"https://www.lrta.com/","streams":{"topo_base":{"2026-06-27":1,"2026-06-28":1,"2026-06-29":3,"2026-06-30":1},"topo_refresh":{"2026-06-27":1,"2026-06-28":1,"2026-06-29":19,"2026-06-30":5},"vehicles":{"2026-05-28":148,"2026-05-29":1,"2026-06-27":33070,"2026-06-28":270,"2026-06-29":35587,"2026-06-30":3625}},"days":{"2026-06-27":33072,"2026-06-28":272,"2026-06-29":35609,"2026-06-30":3631,"2026-05-28":148,"2026-05-29":1},"first_date":"2026-05-28","last_date":"2026-06-30"},{"agency":"MART","name":"Montachusett Regional Transit Authority","is_rt":true,"url":"https://www.mrta.us/","streams":{"alerts":{"2026-06-27":1,"2026-06-29":3,"2026-06-30":4},"predictions":{"2026-06-27":53158,"2026-06-28":33055,"2026-06-29":82960},"routes":{"2026-06-27":18,"2026-06-28":5,"2026-06-29":7},"stops":{"2026-06-27":206},"trips":{"2026-06-30":14676},"vehicles":{"2026-06-27":31107,"2026-06-28":18514,"2026-06-29":68693,"2026-06-30":12706},"vehicles_enhanced":{"2026-06-27":31107,"2026-06-28":18514,"2026-06-29":68693,"2026-06-30":12706}},"days":{"2026-06-27":115597,"2026-06-29":220356,"2026-06-30":40092,"2026-06-28":70088},"first_date":"2026-06-27","last_date":"2026-06-30"},{"agency":"MVRTA","name":"Merrimack Valley Regional Transit Authority","is_rt":true,"url":"https://www.mvrta.com/","streams":{"trips":{"2026-05-28":996,"2026-06-27":204311,"2026-06-28":125927,"2026-06-29":752956,"2026-06-30":191464},"vehicles":{"2026-05-28":517,"2026-06-27":76674,"2026-06-28":36414,"2026-06-29":227847,"2026-06-30":40632}},"days":{"2026-05-28":1513,"2026-06-27":280985,"2026-06-28":162341,"2026-06-29":980803,"2026-06-30":232096},"first_date":"2026-05-28","last_date":"2026-06-30"},{"agency":"MWRTA","name":"MetroWest Regional Transit Authority","is_rt":false,"url":"https://www.mwrta.com/","streams":{},"days":{},"first_date":"","last_date":""},{"agency":"NRTA","name":"Nantucket Regional Transit Authority","is_rt":false,"url":"https://www.nrtawave.com/","streams":{},"days":{},"first_date":"","last_date":""},{"agency":"PVTA","name":"Pioneer Valley Transit Authority","is_rt":true,"url":"https://www.pvta.com/","streams":{"alerts":{"2026-06-27":7,"2026-06-28":1,"2026-06-29":2},"trips":{"2026-06-27":27161},"vehicles":{"2026-06-27":124819,"2026-06-28":109888,"2026-06-29":244617,"2026-06-30":25092}},"days":{"2026-06-27":151987,"2026-06-28":109889,"2026-06-29":244619,"2026-06-30":25092},"first_date":"2026-06-27","last_date":"2026-06-30"},{"agency":"SRTA","name":"Southeastern Regional Transit Authority","is_rt":true,"url":"https://www.srtabus.com/","streams":{"alerts":{"2026-05-30":1,"2026-06-01":28,"2026-06-02":6,"2026-06-03":10,"2026-06-04":8,"2026-06-05":8,"2026-06-06":1,"2026-06-08":24,"2026-06-09":3,"2026-06-10":13,"2026-06-11":5,"2026-06-27":4,"2026-06-29":6},"buses_by_route":{"2026-05-28":15,"2026-05-29":274,"2026-05-30":104},"localized_strings":{"2026-06-27":3},"predictions_by_bus":{"2026-05-29":6},"predictions_by_stop":{"2026-05-28":15,"2026-05-30":181},"routes":{"2026-05-30":71,"2026-06-06":71,"2026-06-27":71},"shapes":{"2026-05-30":45,"2026-05-31":1,"2026-06-01":38,"2026-06-02":6,"2026-06-03":4,"2026-06-04":4,"2026-06-05":2,"2026-06-06":49,"2026-06-08":32,"2026-06-09":3,"2026-06-10":2,"2026-06-27":46,"2026-06-28":2,"2026-06-29":6,"2026-06-30":1},"stops":{"2026-05-30":1356,"2026-06-06":1356,"2026-06-27":1356},"trips":{"2026-05-30":1840,"2026-06-01":18640,"2026-06-02":23830,"2026-06-03":30984,"2026-06-04":6436,"2026-06-06":2938,"2026-06-07":16710,"2026-06-08":40964,"2026-06-09":24222,"2026-06-10":21130,"2026-06-11":25898,"2026-06-27":8617,"2026-06-28":161},"vehicles":{"2026-05-30":54,"2026-06-01":424,"2026-06-02":512,"2026-06-03":662,"2026-06-04":170,"2026-06-06":93,"2026-06-07":512,"2026-06-08":1367,"2026-06-09":767,"2026-06-10":733,"2026-06-11":820,"2026-06-27":245,"2026-06-28":8}},"days":{"2026-05-30":3652,"2026-06-01":19130,"2026-06-02":24354,"2026-06-03":31660,"2026-06-04":6618,"2026-06-05":10,"2026-06-06":4508,"2026-06-08":42387,"2026-06-09":24995,"2026-06-10":21878,"2026-06-11":26723,"2026-06-27":10342,"2026-06-29":12,"2026-05-28":30,"2026-05-29":280,"2026-05-31":1,"2026-06-28":171,"2026-06-30":1,"2026-06-07":17222},"first_date":"2026-05-28","last_date":"2026-06-30"},{"agency":"SSA","name":"Steamship Authority","is_rt":false,"url":"http://steamshipauthority.com/","streams":{},"days":{},"first_date":"","last_date":""},{"agency":"VTA","name":"Vineyard Transit Authority","is_rt":false,"url":"https://www.vineyardtransit.com/","streams":{},"days":{},"first_date":"","last_date":""},{"agency":"WRTA","name":"Worcester Regional Transit Authority","is_rt":true,"url":"https://therta.com/","streams":{"alerts":{"2026-06-27":3,"2026-06-28":1,"2026-06-29":5},"topo_base":{"2026-06-27":2,"2026-06-28":3,"2026-06-29":7,"2026-06-30":3},"topo_refresh":{"2026-06-27":3,"2026-06-28":1,"2026-06-29":8},"vehicles":{"2026-06-27":58663,"2026-06-28":27319,"2026-06-29":144896,"2026-06-30":19135}},"days":{"2026-06-27":58671,"2026-06-28":27324,"2026-06-29":144916,"2026-06-30":19138},"first_date":"2026-06-27","last_date":"2026-06-30"},{"agency":"YANKEE","name":"Yankee Line","is_rt":false,"url":"https://yankeeline.us/","streams":{},"days":{},"first_date":"","last_date":""}];
+
+const CAL_COLORS=['#21262d','#0e4429','#006d32','#26a641','#39d353'];
+const MAIN_STREAMS=new Set([
+  'vehicles','alerts','predictions','stop_events',
+  'schedules','services','shapes','trips','lines',
+  'routes','route_patterns','facilities','stops','live_facilities',
+  'VehiclePositions','Alerts','TripUpdates',
+]);
+function streamGroup(s){
+  if(s.toLowerCase().includes('enhanced'))return'enhanced';
+  if(MAIN_STREAMS.has(s))return'main';
+  return'custom';
+}
+const MONTHS=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+const DOW_LABELS=['Su','M','T','W','Th','F','Sa'];
+const TIPS=['No data','<500 rows','500–2k rows','2k–10k rows','≥10k rows'];
+
+const tt=document.getElementById('tt');
+function showTip(e,html){tt.innerHTML=html;tt.classList.add('show');moveTip(e);}
+function moveTip(e){
+  tt.style.left=Math.min(e.clientX+14,window.innerWidth-210)+'px';
+  tt.style.top=Math.max(e.clientY-30,4)+'px';
+}
+function hideTip(){tt.classList.remove('show');}
+
+function isoDate(dt){
+  return [dt.getFullYear(),String(dt.getMonth()+1).padStart(2,'0'),
+    String(dt.getDate()).padStart(2,'0')].join('-');
+}
+function addDays(dt,n){const d=new Date(dt);d.setDate(d.getDate()+n);return d;}
+function sundayOf(dt){const d=new Date(dt);d.setDate(d.getDate()-d.getDay());return d;}
+function ordinal(n){const s=['th','st','nd','rd'],v=n%100;return n+(s[(v-20)%10]||s[v]||s[0]);}
+function level(rc){
+  if(rc===undefined||rc===null||rc===0)return 0;
+  if(rc<500)return 1;if(rc<2000)return 2;if(rc<10000)return 3;return 4;
+}
+
+let activeYear='';
+let activeStream='All';
+
+function buildAgency(ag){
+  const days={};
+  if(activeStream==='All'){
+    Object.values(ag.streams||{}).forEach(sd=>{
+      Object.entries(sd).forEach(([ds,rc])=>{
+        if(ds.startsWith(activeYear))days[ds]=(days[ds]||0)+rc;
+      });
+    });
+  }else{
+    Object.entries(((ag.streams||{})[activeStream])||{}).forEach(([ds,rc])=>{
+      if(ds.startsWith(activeYear))days[ds]=rc;
+    });
+  }
+  const dayCount=Object.keys(days).length;
+
+  // Skip agencies with no data in this year
+  if(!ag.is_rt||dayCount===0)return null;
+
+  const block=document.createElement('div');
+  block.className='agency-block';
+
+  const hdr=document.createElement('div');
+  hdr.className='agency-header';
+  const nameEl=ag.url
+    ? `<a class="agency-name" href="${ag.url}" target="_blank" rel="noopener">${ag.name}</a>`
+    : `<span class="agency-name">${ag.name}</span>`;
+  hdr.innerHTML=`<span class="agency-code">${ag.agency}</span><span style="color:#8b949e"> — </span>${nameEl}<span class="day-count">(${dayCount} ${dayCount===1?'day':'days'} in ${activeYear})</span>`;
+  block.appendChild(hdr);
+
+  const yearStart=new Date(parseInt(activeYear),0,1);
+  const yearEnd=new Date(parseInt(activeYear),11,31);
+  const calStart =sundayOf(yearStart);
+  const calEndDay=yearEnd.getDay();
+  const calEnd=addDays(yearEnd,calEndDay===6?0:6-calEndDay);
+
+  const weeks=[];let week=[],cur=new Date(calStart);
+  while(cur<=calEnd){
+    week.push(new Date(cur));
+    if(cur.getDay()===6){weeks.push(week);week=[];}
+    cur=addDays(cur,1);
+  }
+  if(week.length)weeks.push(week);
+
+  // Month row
+  const monthRow=document.createElement('div');
+  monthRow.className='month-row';
+  weeks.forEach(wk=>{
+    const span=document.createElement('span');
+    span.className='month-lbl';
+    const firstOfMonth=wk.find(x=>x.getDate()===1&&x>=yearStart&&x<=yearEnd);
+    if(firstOfMonth)span.textContent=MONTHS[firstOfMonth.getMonth()];
+    else if(wk===weeks[0]){const iy=wk.find(x=>x>=yearStart);if(iy)span.textContent=MONTHS[iy.getMonth()];}
+    monthRow.appendChild(span);
+  });
+
+  const outer=document.createElement('div');outer.className='cal-outer';
+  const grid =document.createElement('div');grid.className='cal-grid';
+
+  const dowCol=document.createElement('div');dowCol.className='dow-col';
+  DOW_LABELS.forEach(l=>{
+    const s=document.createElement('div');s.className='dow-lbl';s.textContent=l;
+    dowCol.appendChild(s);
+  });
+  grid.appendChild(dowCol);
+
+  const weeksDiv=document.createElement('div');weeksDiv.className='cal-weeks';
+  weeks.forEach(wk=>{
+    const col=document.createElement('div');col.className='week-col';
+    wk.forEach(day=>{
+      const ds=isoDate(day);
+      const cell=document.createElement('div');cell.className='dc';
+      const inYear=day>=yearStart&&day<=yearEnd;
+      if(!inYear){cell.classList.add('dc-blank');}
+      else{
+        const rc=days[ds],lv=level(rc);
+        cell.classList.add('dc'+lv);
+        const dateFmt=day.toLocaleDateString('en-US',{month:'long'})+' '+ordinal(day.getDate())+', '+day.getFullYear();
+        const rowStr=rc!==undefined?`${Number(rc).toLocaleString()} rows`:'No data';
+        cell.addEventListener('mouseenter',e=>showTip(e,`<strong>${dateFmt}</strong><br>${rowStr}`));
+        cell.addEventListener('mousemove',moveTip);
+        cell.addEventListener('mouseleave',hideTip);
+      }
+      col.appendChild(cell);
+    });
+    weeksDiv.appendChild(col);
+  });
+  grid.appendChild(weeksDiv);
+
+  // Legend — right-aligned, same width as scrollable calendar area
+  const legend=document.createElement('div');
+  legend.className='cal-legend';
+  const less=document.createElement('span');less.textContent='Less';
+  legend.appendChild(less);
+  for(let i=0;i<=4;i++){
+    const sq=document.createElement('span');
+    sq.className='legend-sq';sq.style.background=CAL_COLORS[i];sq.title=TIPS[i];
+    legend.appendChild(sq);
+  }
+  const more=document.createElement('span');more.textContent='More';
+  legend.appendChild(more);
+
+  outer.appendChild(monthRow);
+  outer.appendChild(grid);
+  outer.appendChild(legend);
+  block.appendChild(outer);
+  return block;
+}
+
+function renderAll(){
+  const root=document.getElementById('cal-root');
+  root.innerHTML='';
+  let count=0;
+  AGENCIES.forEach(ag=>{
+    const el=buildAgency(ag);
+    if(el){root.appendChild(el);count++;}
+  });
+  if(count===0){
+    root.innerHTML='<p style="color:#8b949e;font-size:0.85rem">No realtime data captured for '+activeYear+'.</p>';
+  }
+}
+
+function renderYearBar(){
+  const bar=document.getElementById('yearBtns');
+  bar.innerHTML='';
+  const allYears=[...new Set(AGENCIES.flatMap(ag=>Object.keys(ag.days).map(d=>d.slice(0,4))))].sort();
+  if(!activeYear)activeYear=allYears[allYears.length-1]||String(new Date().getFullYear());
+  allYears.forEach(y=>{
+    const btn=document.createElement('button');
+    btn.className='year-btn'+(y===activeYear?' active':'');
+    btn.textContent=y;
+    btn.onclick=()=>{activeYear=y;renderYearBar();renderStreamBar();renderAll();setGridLayout();};
+    bar.appendChild(btn);
+  });
+}
+
+function renderStreamBar(){
+  const groups={main:new Set(),enhanced:new Set(),custom:new Set()};
+  AGENCIES.forEach(ag=>{
+    Object.entries(ag.streams||{}).forEach(([s,sd])=>{
+      if(Object.keys(sd).some(d=>d.startsWith(activeYear)))
+        groups[streamGroup(s)].add(s);
+    });
+  });
+  function fillBar(barId,streams,wrapId){
+    const bar=document.getElementById(barId);
+    bar.innerHTML='';
+    if(wrapId){
+      const wrap=document.getElementById(wrapId);
+      if(!streams.length){wrap.style.display='none';return;}
+      wrap.style.display='';
+    }
+    streams.forEach(s=>{
+      const btn=document.createElement('button');
+      btn.className='year-btn'+(s===activeStream?' active':'');
+      btn.textContent=s;
+      btn.onclick=()=>{activeStream=s;renderStreamBar();renderAll();setGridLayout();};
+      bar.appendChild(btn);
+    });
+  }
+  fillBar('streamMain',['All',...[...groups.main].sort()],null);
+  fillBar('streamEnhanced',[...groups.enhanced].sort(),'sg-enhanced');
+  fillBar('streamCustom',[...groups.custom].sort(),'sg-custom');
+}
+
+function setGridLayout(){
+  const root=document.getElementById('cal-root');
+  const blocks=Array.from(root.querySelectorAll('.agency-block'));
+  if(!blocks.length)return;
+  const maxW=Math.max(...blocks.map(b=>b.getBoundingClientRect().width));
+  const avail=window.innerWidth-56;
+  root.style.gridTemplateColumns=avail>=maxW*2+20?'repeat(2,max-content)':'max-content';
+}
+
+renderYearBar();
+renderStreamBar();
+renderAll();
+setGridLayout();
+window.addEventListener('resize',setGridLayout);
+</script>
+</body>
+</html>
